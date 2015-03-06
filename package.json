@@ -13,7 +13,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mhfrantz/ts-pkg-installer.git"
+    "url": "https://github.com/RedSeal-co/ts-pkg-installer.git"
   },
   "bin": {
     "ts-pkg-installer": "bin/ts-pkg-installer.sh",
