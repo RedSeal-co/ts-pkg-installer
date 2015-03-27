@@ -216,6 +216,19 @@ describe('ts-pkg-installer', () => {
       });
     });
 
+    it('displays version (-V)', (done: MochaDone) => {
+      run(nominalTestData, ['-V'], function (error: Error, stdout: string, stderr: string): void {
+        expect(error).to.equal(null);
+        expect(stderr).to.equal('');
+
+        // Expect the output to look like a version string.
+        expect(stdout).to.match(/^\d+\.\d+\.\d+\n$/);
+
+        // Version display should prevent the script from further processing.
+        expectNoOutput(done);
+      });
+    });
+
   });
 
   // ### Config File
