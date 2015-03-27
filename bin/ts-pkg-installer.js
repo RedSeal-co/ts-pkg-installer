@@ -2,17 +2,20 @@
 ///<reference path="../typings/commander/commander.d.ts"/>
 ///<reference path="../typings/bluebird/bluebird.d.ts"/>
 ///<reference path="../typings/debug/debug.d.ts"/>
+///<reference path="../typings/fs-extra/fs-extra.d.ts"/>
 ///<reference path="../typings/glob/glob.d.ts"/>
+///<reference path="../typings/lodash/lodash.d.ts"/>
 ///<reference path="../typings/mkdirp/mkdirp.d.ts"/>
 ///<reference path="../typings/node/node.d.ts"/>
 ///<reference path="./util.ts"/>
 'use strict';
 require('source-map-support').install();
+var _ = require('lodash');
 var assert = require('assert');
 var BluePromise = require('bluebird');
 var commander = require('commander');
 var debug = require('debug');
-var fs = require('fs');
+var fs = require('fs-extra');
 var mkdirp = require('mkdirp');
 var path = require('path');
 var util = require('./util');
@@ -41,6 +44,7 @@ var Config = (function () {
         this.force = config.force || false;
         this.packageConfig = config.packageConfig || 'package.json';
         this.mainDeclaration = config.mainDeclaration;
+        this.secondaryDeclarations = config.secondaryDeclarations || [];
         this.moduleName = config.moduleName;
         this.localTypingsDir = config.localTypingsDir || 'typings';
         this.exportedTypingsDir = config.exportedTypingsDir;
@@ -72,6 +76,7 @@ function normalizedFsExists(file, callback) {
 var fsExistsAsync = BluePromise.promisify(normalizedFsExists);
 var fsReadFileAsync = BluePromise.promisify(fs.readFile);
 var fsWriteFileAsync = BluePromise.promisify(fs.writeFile);
+var fsCopyAsync = BluePromise.promisify(fs.copy);
 var mkdirpAsync = BluePromise.promisify(mkdirp);
 // ### DeclarationFileState
 // Maintain a state machine, separating the file into header and body sections.
@@ -103,7 +108,7 @@ var TypeScriptPackageInstaller = (function () {
                 }).then(function () {
                     return _this.wrapMainDeclaration();
                 }).then(function () {
-                    return _this.copyExportedModules();
+                    return _this.copyExportedDeclarations();
                 }).then(function () {
                     return _this.readLocalTsdConfigFile();
                 }).then(function () {
@@ -220,7 +225,7 @@ var TypeScriptPackageInstaller = (function () {
         // Figure out what the main declaration file is.
         var mainDeclarationFile = this.determineMainDeclaration();
         // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
-        var mainDeclarationDir = path.dirname(path.resolve(mainDeclarationFile));
+        var mainDeclarationDir = this.determineMainDeclarationDir();
         dlog('Reading main declaration file: ' + mainDeclarationFile);
         return fsReadFileAsync(mainDeclarationFile, 'utf8').then(function (contents) {
             dlog('Parsing main declaration file: ' + mainDeclarationFile);
@@ -245,6 +250,14 @@ var TypeScriptPackageInstaller = (function () {
             var mainDTS = mainJS.replace(/\.js$/, '.d.ts');
             return mainDTS;
         }
+    };
+    // Determine the directory containing the main declaration file.
+    TypeScriptPackageInstaller.prototype.determineMainDeclarationDir = function () {
+        // Figure out what the main declaration file is.
+        var mainDeclarationFile = this.determineMainDeclaration();
+        // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
+        var mainDeclarationDir = path.dirname(path.resolve(mainDeclarationFile));
+        return mainDeclarationDir;
     };
     // Wrap the main declaration file whose contents are provided.
     // - *contents*: Contents of the main declaration file (TypeScript *.d.ts file)
@@ -318,10 +331,34 @@ var TypeScriptPackageInstaller = (function () {
     TypeScriptPackageInstaller.prototype.rewriteReferencePath = function (referencePath, dir) {
         assert(this.config && this.config.typingsSubdir);
         assert(this.config && this.config.localTypingsDir);
-        var localTypingsSubdir = path.resolve(path.join(this.config.localTypingsDir, this.config.typingsSubdir));
-        var currentPath = path.resolve(dir, referencePath);
-        var newPath = path.relative(localTypingsSubdir, currentPath);
+        // Determine the rewritten path.
+        var newPath;
+        // If we are referring to a path that is one of the secondary declarations that we are going to copy, then we don't
+        // have to modify it.
+        if (this.isSecondaryDeclaration(referencePath)) {
+            newPath = referencePath;
+        }
+        else {
+            var localTypingsSubdir = path.resolve(path.join(this.config.localTypingsDir, this.config.typingsSubdir));
+            var currentPath = path.resolve(dir, referencePath);
+            newPath = path.relative(localTypingsSubdir, currentPath);
+        }
         return '/// <reference path="' + newPath + '" />';
+    };
+    // Check if the reference path refers to one of the secondary declarations.
+    TypeScriptPackageInstaller.prototype.isSecondaryDeclaration = function (referencePath) {
+        assert(this.config);
+        assert(_.isArray(this.config.secondaryDeclarations));
+        // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
+        var mainDeclarationDir = this.determineMainDeclarationDir();
+        var resolvedReferencePath = path.resolve(mainDeclarationDir, referencePath);
+        // Check if it matches any of the secondary
+        var match = _.find(this.config.secondaryDeclarations, function (secondaryDeclaration) {
+            var resolvedSecondaryDeclaration = path.resolve(secondaryDeclaration);
+            return resolvedReferencePath === resolvedSecondaryDeclaration;
+        });
+        dlog('Reference path', referencePath, 'matches', match);
+        return match ? true : false;
     };
     // Return the TypeScript module declaration statement for this package.
     TypeScriptPackageInstaller.prototype.moduleDeclaration = function () {
@@ -330,8 +367,13 @@ var TypeScriptPackageInstaller = (function () {
         var moduleName = this.config.moduleName || this.packageConfig.name;
         return 'declare module \'' + moduleName + '\' {';
     };
-    // Copy exported modules into typings
-    TypeScriptPackageInstaller.prototype.copyExportedModules = function () {
+    // Copy exported declarations into typings.
+    TypeScriptPackageInstaller.prototype.copyExportedDeclarations = function () {
+        var _this = this;
+        return this.copyMainModuleDeclaration().then(function () { return _this.copySecondaryDeclarations(); });
+    };
+    // Copy the wrapped main module declaration into typings.
+    TypeScriptPackageInstaller.prototype.copyMainModuleDeclaration = function () {
         var _this = this;
         assert(this.config);
         assert(this.exportedTypingsSubdir);
@@ -347,6 +389,37 @@ var TypeScriptPackageInstaller = (function () {
             dlog('Writing main declaration file: ' + mainDeclaration);
             return _this.maybeDo(function () {
                 return fsWriteFileAsync(mainDeclaration, _this.wrappedMainDeclaration);
+            });
+        });
+    };
+    // Copy the secondary declarations (as-is) into typings.
+    TypeScriptPackageInstaller.prototype.copySecondaryDeclarations = function () {
+        var _this = this;
+        assert(this.config);
+        assert(_.isArray(this.config.secondaryDeclarations));
+        var promises = _.map(this.config.secondaryDeclarations, function (basename) { return _this.copySecondaryDeclaration(basename); });
+        return BluePromise.all(promises).then(function () {
+            return;
+        });
+    };
+    // Copy a single secondary declaration (as-is) into typings.
+    TypeScriptPackageInstaller.prototype.copySecondaryDeclaration = function (sourceFile) {
+        var _this = this;
+        // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
+        var mainDeclarationDir = this.determineMainDeclarationDir();
+        // Determine the path relative to the directory containing the main declaration.
+        var sourceRelativePath = path.relative(mainDeclarationDir, sourceFile);
+        // Figure out where it needs to be copied.
+        var destinationFile = path.join(this.exportedTypingsSubdir, sourceRelativePath);
+        // Make sure the directory exists.
+        var destinationDir = path.dirname(path.resolve(destinationFile));
+        return this.maybeDo(function () {
+            dlog('Creating directory for secondary declaration file:', destinationDir);
+            return mkdirpAsync(destinationDir);
+        }).then(function () {
+            dlog('Copying secondary declaration file:', destinationFile);
+            return _this.maybeDo(function () {
+                return fsCopyAsync(sourceFile, destinationFile);
             });
         });
     };

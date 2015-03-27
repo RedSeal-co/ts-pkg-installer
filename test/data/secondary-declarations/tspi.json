@@ -1,0 +1,3 @@
+{
+  "secondaryDeclarations": ["./lib/util.d.ts", "./lib/foo.d.ts"]
+}

@@ -2,7 +2,9 @@
 ///<reference path="../typings/commander/commander.d.ts"/>
 ///<reference path="../typings/bluebird/bluebird.d.ts"/>
 ///<reference path="../typings/debug/debug.d.ts"/>
+///<reference path="../typings/fs-extra/fs-extra.d.ts"/>
 ///<reference path="../typings/glob/glob.d.ts"/>
+///<reference path="../typings/lodash/lodash.d.ts"/>
 ///<reference path="../typings/mkdirp/mkdirp.d.ts"/>
 ///<reference path="../typings/node/node.d.ts"/>
 
@@ -13,11 +15,12 @@
 declare function require(name: string): any;
 require('source-map-support').install();
 
+import _ = require('lodash');
 import assert = require('assert');
 import BluePromise = require('bluebird');
 import commander = require('commander');
 import debug = require('debug');
-import fs = require('fs');
+import fs = require('fs-extra');
 import glob = require('glob');
 import mkdirp = require('mkdirp');
 import path = require('path');
@@ -66,6 +69,9 @@ class Config {
   // JS file, as declared in package config.
   mainDeclaration: string;
 
+  // Path to any secondary declaration files that should be exported alongside mainDeclaration.
+  secondaryDeclarations: string[];
+
   // Name of the module as specified in the wrapped declaration file.  By default, this is the name of the NPM package.
   moduleName: string;
 
@@ -91,6 +97,7 @@ class Config {
     this.force = config.force || false;
     this.packageConfig = config.packageConfig || 'package.json';
     this.mainDeclaration = config.mainDeclaration;
+    this.secondaryDeclarations = config.secondaryDeclarations || [];
     this.moduleName = config.moduleName;
     this.localTypingsDir = config.localTypingsDir || 'typings';
     this.exportedTypingsDir = config.exportedTypingsDir;
@@ -146,6 +153,13 @@ interface IFsWriteFileAsync {
 }
 var fsWriteFileAsync: IFsWriteFileAsync = <IFsWriteFileAsync> BluePromise.promisify(fs.writeFile);
 
+// ## fsCopyAsync
+// fs.copy that is promisified.
+interface IFsCopyAsync {
+  (source: string, destination: string): BluePromise<void>;
+}
+var fsCopyAsync: IFsCopyAsync = <IFsCopyAsync> BluePromise.promisify(fs.copy);
+
 // ## mkdirp
 interface IMkDirP {
   (path: string): BluePromise<void>;
@@ -188,7 +202,7 @@ class TypeScriptPackageInstaller {
           return this.readPackageConfigFile()
             .then(() => { return this.determineExportedTypingsSubdir(); })
             .then(() => { return this.wrapMainDeclaration(); })
-            .then(() => { return this.copyExportedModules(); })
+            .then(() => { return this.copyExportedDeclarations(); })
             .then(() => { return this.readLocalTsdConfigFile(); })
             .then(() => { return this.maybeHaulTypings(); });
         } else {
@@ -321,7 +335,7 @@ class TypeScriptPackageInstaller {
     var mainDeclarationFile: string = this.determineMainDeclaration();
 
     // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
-    var mainDeclarationDir: string = path.dirname(path.resolve(mainDeclarationFile));
+    var mainDeclarationDir: string = this.determineMainDeclarationDir();
 
     dlog('Reading main declaration file: ' + mainDeclarationFile);
     return fsReadFileAsync(mainDeclarationFile, 'utf8')
@@ -351,6 +365,18 @@ class TypeScriptPackageInstaller {
       var mainDTS = mainJS.replace(/\.js$/, '.d.ts');
       return mainDTS;
     }
+  }
+
+  // Determine the directory containing the main declaration file.
+  private determineMainDeclarationDir(): string {
+
+    // Figure out what the main declaration file is.
+    var mainDeclarationFile: string = this.determineMainDeclaration();
+
+    // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
+    var mainDeclarationDir: string = path.dirname(path.resolve(mainDeclarationFile));
+
+    return mainDeclarationDir;
   }
 
   // Wrap the main declaration file whose contents are provided.
@@ -441,10 +467,38 @@ class TypeScriptPackageInstaller {
     assert(this.config && this.config.typingsSubdir);
     assert(this.config && this.config.localTypingsDir);
 
-    var localTypingsSubdir: string = path.resolve(path.join(this.config.localTypingsDir, this.config.typingsSubdir));
-    var currentPath: string = path.resolve(dir, referencePath);
-    var newPath: string = path.relative(localTypingsSubdir, currentPath);
+    // Determine the rewritten path.
+    var newPath: string;
+
+    // If we are referring to a path that is one of the secondary declarations that we are going to copy, then we don't
+    // have to modify it.
+    if (this.isSecondaryDeclaration(referencePath)) {
+      newPath = referencePath;
+    } else {
+      var localTypingsSubdir: string = path.resolve(path.join(this.config.localTypingsDir, this.config.typingsSubdir));
+      var currentPath: string = path.resolve(dir, referencePath);
+      newPath = path.relative(localTypingsSubdir, currentPath);
+    }
     return '/// <reference path="' + newPath + '" />';
+  }
+
+  // Check if the reference path refers to one of the secondary declarations.
+  private isSecondaryDeclaration(referencePath: string): boolean {
+    assert(this.config);
+    assert(_.isArray(this.config.secondaryDeclarations));
+
+    // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
+    var mainDeclarationDir: string = this.determineMainDeclarationDir();
+    var resolvedReferencePath: string = path.resolve(mainDeclarationDir, referencePath);
+
+    // Check if it matches any of the secondary
+    var match: string = _.find(this.config.secondaryDeclarations, (secondaryDeclaration: string): boolean => {
+      var resolvedSecondaryDeclaration: string = path.resolve(secondaryDeclaration);
+      return resolvedReferencePath === resolvedSecondaryDeclaration;
+    });
+    dlog('Reference path', referencePath, 'matches', match);
+
+    return match ? true : false;
   }
 
   // Return the TypeScript module declaration statement for this package.
@@ -455,8 +509,14 @@ class TypeScriptPackageInstaller {
     return 'declare module \'' + moduleName + '\' {';
   }
 
-  // Copy exported modules into typings
-  private copyExportedModules(): BluePromise<void> {
+  // Copy exported declarations into typings.
+  private copyExportedDeclarations(): BluePromise<void> {
+    return this.copyMainModuleDeclaration()
+      .then(() => this.copySecondaryDeclarations());
+  }
+
+  // Copy the wrapped main module declaration into typings.
+  private copyMainModuleDeclaration(): BluePromise<void> {
     assert(this.config);
     assert(this.exportedTypingsSubdir);
     assert(this.wrappedMainDeclaration);
@@ -471,6 +531,44 @@ class TypeScriptPackageInstaller {
         dlog('Writing main declaration file: ' + mainDeclaration);
         return this.maybeDo((): BluePromise<void> => {
           return fsWriteFileAsync(mainDeclaration, this.wrappedMainDeclaration);
+        });
+      });
+  }
+
+  // Copy the secondary declarations (as-is) into typings.
+  private copySecondaryDeclarations(): BluePromise<void> {
+    assert(this.config);
+    assert(_.isArray(this.config.secondaryDeclarations));
+
+    var promises: BluePromise<void>[] =
+      _.map(this.config.secondaryDeclarations,
+            (basename: string): BluePromise<void> => this.copySecondaryDeclaration(basename));
+    return BluePromise.all(promises).then(() => { return; });
+  }
+
+  // Copy a single secondary declaration (as-is) into typings.
+  private copySecondaryDeclaration(sourceFile: string): BluePromise<void> {
+    // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
+    var mainDeclarationDir: string = this.determineMainDeclarationDir();
+
+    // Determine the path relative to the directory containing the main declaration.
+    var sourceRelativePath: string = path.relative(mainDeclarationDir, sourceFile);
+
+    // Figure out where it needs to be copied.
+    var destinationFile: string = path.join(this.exportedTypingsSubdir, sourceRelativePath);
+
+    // Make sure the directory exists.
+    var destinationDir: string = path.dirname(path.resolve(destinationFile));
+
+    return this.maybeDo(
+      (): BluePromise<void> => {
+        dlog('Creating directory for secondary declaration file:', destinationDir);
+        return mkdirpAsync(destinationDir);
+      })
+      .then((): BluePromise<void> => {
+        dlog('Copying secondary declaration file:', destinationFile);
+        return this.maybeDo((): BluePromise<void> => {
+          return fsCopyAsync(sourceFile, destinationFile);
         });
       });
   }
