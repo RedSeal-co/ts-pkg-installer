@@ -2,6 +2,7 @@
 /// <reference path="../bin/util.d.ts"/>
 /// <reference path="../typings/chai/chai.d.ts"/>
 /// <reference path="../typings/debug/debug.d.ts"/>
+/// <reference path="../typings/lodash/lodash.d.ts"/>
 /// <reference path="../typings/mkdirp/mkdirp.d.ts"/>
 /// <reference path="../typings/mocha/mocha.d.ts"/>
 /// <reference path="../typings/ncp/ncp.d.ts"/>
@@ -13,6 +14,7 @@
 declare function require(name: string): any;
 require('source-map-support').install();
 
+import _ = require('lodash');
 import chai = require('chai');
 import childProcess = require('child_process');
 import debug = require('debug');
@@ -482,6 +484,23 @@ describe('ts-pkg-installer', () => {
       });
     });
 
+    it('wraps file with references to secondary declarations', (done: MochaDone) => {
+      var testData: string = path.join(testDataRoot, 'secondary-declarations');
+      run(testData, ['-v', '-n'], function (error: Error, stdout: string, stderr: string): void {
+        expect(error).to.equal(null);
+        expect(stderr).to.contain('ts-pkg-installer Wrapped main declaration file:\n' +
+                                  '/// <reference path="lib/foo.d.ts" />\n' +
+                                  'declare module \'secondary-declarations\' {\n' +
+                                  'export import util = require(\'./lib/util\');\n' +
+                                  'import foo = require(\'foo\');\n' +
+                                  'export import Foo = foo.Foo;\n' +
+                                  'export function makeFoo(): Foo;\n' +
+                                  '}\n\n');
+        expect(stdout).to.equal('');
+        done();
+      });
+    });
+
   });
 
   // ### Copy Exported Modules
@@ -524,6 +543,22 @@ describe('ts-pkg-installer', () => {
       });
     });
 
+    it('copies secondary declarations', (done: MochaDone) => {
+      var testData = path.join(testDataRoot, 'secondary-declarations');
+      run(testData, ['-v'], function (error: Error, stdout: string, stderr: string): void {
+        expect(error).to.equal(null);
+        expect(stdout).to.equal('');
+
+        var expectedBasenames: string[] = ['index.d.ts', path.join('lib', 'util.d.ts'), path.join('lib', 'foo.d.ts')];
+        _.forEach(expectedBasenames, (expectedBasename: string): void => {
+          var expectedPath: string = path.join(testOutputDir, 'typings', 'secondary-declarations', expectedBasename);
+          var actualContents = fs.readFileSync(expectedPath, 'utf8');
+          expect(actualContents).to.be.ok;
+        });
+
+        done();
+      });
+    });
 
     describe('scoped', () => {
 

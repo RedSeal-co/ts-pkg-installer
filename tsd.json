@@ -40,6 +40,9 @@
     },
     "lodash/lodash.d.ts": {
       "commit": "ec6e0ae9525a165ca94d751932dd387078800c1e"
+    },
+    "fs-extra/fs-extra.d.ts": {
+      "commit": "be0b6b394f77a59e192ad7cfec18078706e44db5"
     }
   }
 }
