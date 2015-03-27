@@ -25,6 +25,9 @@ import glob = require('glob');
 import mkdirp = require('mkdirp');
 import path = require('path');
 
+// There is no DTS for this package, but we will promisify it later.
+var readPackageJson = require('read-package-json');
+
 import util = require('./util');
 
 BluePromise.longStackTraces();
@@ -49,8 +52,7 @@ var defaultOptions = new Options();
 commander
   .option('-f, --config-file <path>', 'Config file [' + defaultOptions.configFile + ']', defaultOptions.configFile)
   .option('-n, --dry-run', 'Dry run (display what would happen without taking action)')
-  .option('-v, --verbose', 'Verbose logging')
-  .version('1.0.0');
+  .option('-v, --verbose', 'Verbose logging');
 
 var debugNamespace = 'ts-pkg-installer';
 var dlog: debug.Debugger = debug(debugNamespace);
@@ -120,6 +122,12 @@ class PackageConfig {
     this.main = config.main || 'index.js';
   }
 }
+
+// ## readPackageJsonAsync
+interface IReadPackageJsonAsync {
+  (packageFile: string): BluePromise<string>;
+}
+var readPackageJsonAsync: IReadPackageJsonAsync = <IReadPackageJsonAsync> BluePromise.promisify(readPackageJson);
 
 // ## fsExistsAsync
 // Special handling for fs.exists, which does not conform to Node.js standards for async interfaces.
@@ -658,21 +666,38 @@ class TypeScriptPackageInstaller {
   }
 }
 
-// Parse command line arguments.
-commander.parse(process.argv);
-dlog('commander:\n' + JSON.stringify(commander, null, 2));
-
-if (commander.args.length !== 0) {
-  process.stderr.write('Unexpected arguments.\n');
-  commander.help();
-} else {
-  // Retrieve the options (which are stored as undeclared members of the command object).
-  var options = new Options(commander);
-  var mgr = new TypeScriptPackageInstaller(options);
-  mgr.main()
-    .catch((err: Error) => {
-      dlog(err.toString());
-      process.stderr.write(__filename + ': ' + err.toString() + '\n');
-      process.exit(1);
+// Set the version of this tool based on package.json.
+function setVersion(): BluePromise<void> {
+  var packageJsonFile: string = path.join(__dirname, '..', 'package.json');
+  return readPackageJsonAsync(packageJsonFile)
+    .then((packageJson: any): void => {
+      var version: string = packageJson.version;
+      dlog('Version:', version);
+      commander.version(version);
+      return;
     });
 }
+
+// Determine the version before parsing command-line.
+setVersion()
+  .then((): void => {
+
+    // Parse command line arguments.
+    commander.parse(process.argv);
+    dlog('commander:\n' + JSON.stringify(commander, null, 2));
+
+    if (commander.args.length !== 0) {
+      process.stderr.write('Unexpected arguments.\n');
+      commander.help();
+    } else {
+      // Retrieve the options (which are stored as undeclared members of the command object).
+      var options = new Options(commander);
+      var mgr = new TypeScriptPackageInstaller(options);
+      mgr.main()
+        .catch((err: Error) => {
+          dlog(err.toString());
+          process.stderr.write(__filename + ': ' + err.toString() + '\n');
+          process.exit(1);
+        });
+    }
+  });

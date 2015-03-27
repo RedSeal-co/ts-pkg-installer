@@ -18,6 +18,8 @@ var debug = require('debug');
 var fs = require('fs-extra');
 var mkdirp = require('mkdirp');
 var path = require('path');
+// There is no DTS for this package, but we will promisify it later.
+var readPackageJson = require('read-package-json');
 var util = require('./util');
 BluePromise.longStackTraces();
 // Command-line options, describing the structure of options in commander.
@@ -33,7 +35,7 @@ var Options = (function () {
 var defaultOptions = new Options();
 // ## CLI
 // Define the CLI.
-commander.option('-f, --config-file <path>', 'Config file [' + defaultOptions.configFile + ']', defaultOptions.configFile).option('-n, --dry-run', 'Dry run (display what would happen without taking action)').option('-v, --verbose', 'Verbose logging').version('1.0.0');
+commander.option('-f, --config-file <path>', 'Config file [' + defaultOptions.configFile + ']', defaultOptions.configFile).option('-n, --dry-run', 'Dry run (display what would happen without taking action)').option('-v, --verbose', 'Verbose logging');
 var debugNamespace = 'ts-pkg-installer';
 var dlog = debug(debugNamespace);
 // ## Config
@@ -65,6 +67,7 @@ var PackageConfig = (function () {
     }
     return PackageConfig;
 })();
+var readPackageJsonAsync = BluePromise.promisify(readPackageJson);
 // ## fsExistsAsync
 // Special handling for fs.exists, which does not conform to Node.js standards for async interfaces.
 // We must first normalize the fs.exists API to give it the node-like callback signature.
@@ -501,21 +504,34 @@ var TypeScriptPackageInstaller = (function () {
     };
     return TypeScriptPackageInstaller;
 })();
-// Parse command line arguments.
-commander.parse(process.argv);
-dlog('commander:\n' + JSON.stringify(commander, null, 2));
-if (commander.args.length !== 0) {
-    process.stderr.write('Unexpected arguments.\n');
-    commander.help();
-}
-else {
-    // Retrieve the options (which are stored as undeclared members of the command object).
-    var options = new Options(commander);
-    var mgr = new TypeScriptPackageInstaller(options);
-    mgr.main().catch(function (err) {
-        dlog(err.toString());
-        process.stderr.write(__filename + ': ' + err.toString() + '\n');
-        process.exit(1);
+// Set the version of this tool based on package.json.
+function setVersion() {
+    var packageJsonFile = path.join(__dirname, '..', 'package.json');
+    return readPackageJsonAsync(packageJsonFile).then(function (packageJson) {
+        var version = packageJson.version;
+        dlog('Version:', version);
+        commander.version(version);
+        return;
     });
 }
+// Determine the version before parsing command-line.
+setVersion().then(function () {
+    // Parse command line arguments.
+    commander.parse(process.argv);
+    dlog('commander:\n' + JSON.stringify(commander, null, 2));
+    if (commander.args.length !== 0) {
+        process.stderr.write('Unexpected arguments.\n');
+        commander.help();
+    }
+    else {
+        // Retrieve the options (which are stored as undeclared members of the command object).
+        var options = new Options(commander);
+        var mgr = new TypeScriptPackageInstaller(options);
+        mgr.main().catch(function (err) {
+            dlog(err.toString());
+            process.stderr.write(__filename + ': ' + err.toString() + '\n');
+            process.exit(1);
+        });
+    }
+});
 //# sourceMappingURL=ts-pkg-installer.js.map
