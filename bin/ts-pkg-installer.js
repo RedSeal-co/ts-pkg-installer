@@ -2,7 +2,6 @@
 ///<reference path="../typings/commander/commander.d.ts"/>
 ///<reference path="../typings/bluebird/bluebird.d.ts"/>
 ///<reference path="../typings/debug/debug.d.ts"/>
-///<reference path="../typings/fs-extra/fs-extra.d.ts"/>
 ///<reference path="../typings/glob/glob.d.ts"/>
 ///<reference path="../typings/lodash/lodash.d.ts"/>
 ///<reference path="../typings/mkdirp/mkdirp.d.ts"/>
@@ -15,7 +14,7 @@ var assert = require('assert');
 var BluePromise = require('bluebird');
 var commander = require('commander');
 var debug = require('debug');
-var fs = require('fs-extra');
+var fs = require('fs');
 var mkdirp = require('mkdirp');
 var path = require('path');
 // There is no DTS for this package, but we will promisify it later.
@@ -79,7 +78,6 @@ function normalizedFsExists(file, callback) {
 var fsExistsAsync = BluePromise.promisify(normalizedFsExists);
 var fsReadFileAsync = BluePromise.promisify(fs.readFile);
 var fsWriteFileAsync = BluePromise.promisify(fs.writeFile);
-var fsCopyAsync = BluePromise.promisify(fs.copy);
 var mkdirpAsync = BluePromise.promisify(mkdirp);
 // ### DeclarationFileState
 // Maintain a state machine, separating the file into header and body sections.
@@ -272,8 +270,6 @@ var TypeScriptPackageInstaller = (function () {
         // Recognize comments that may appear in the header or body.
         var commentRegex = /^ *\/\/.*$/;
         var blankRegex = /^ *$/;
-        // Recognize reference path lines that form the header.
-        var referencePathRegex = /^ *\/\/\/ *<reference *path *= *"(.*)" *\/> *$/;
         // Recognize declarations in the body.
         var declarationRegex = /^(export )?(declare )(.*)$/;
         // Maintain a state machine, separating the file into header and body sections.
@@ -281,7 +277,7 @@ var TypeScriptPackageInstaller = (function () {
         var reducer = function (wrapped, line) {
             if (state === 0 /* Header */) {
                 // See if we have a reference path (which is a form of comment).
-                var referencePathMatches = line.match(referencePathRegex);
+                var referencePathMatches = line.match(TypeScriptPackageInstaller.referencePathRegex);
                 var isReferencePath = referencePathMatches && true;
                 if (isReferencePath) {
                     // Rewrite the reference path relative to the destination typings directory.
@@ -328,6 +324,31 @@ var TypeScriptPackageInstaller = (function () {
             return wrapped.join('\n');
         });
     };
+    // Rewrite the secondary declaration file whose contents are provided.
+    // - *contents*: Contents of the secondary declaration file (TypeScript *.d.ts file)
+    // - *referencePathDir*: Directory to resolve related reference paths.
+    TypeScriptPackageInstaller.prototype.rewriteSecondaryDeclarationContents = function (contents, referencePathDir) {
+        var _this = this;
+        // Process each line in the main declaration file.
+        var lines = contents.split('\n');
+        var reducer = function (wrapped, line) {
+            // See if we have a reference path.
+            var referencePathMatches = line.match(TypeScriptPackageInstaller.referencePathRegex);
+            var isReferencePath = referencePathMatches && true;
+            if (isReferencePath) {
+                // Rewrite the reference path relative to the destination typings directory.
+                var referencePath = referencePathMatches[1];
+                assert(referencePath);
+                line = _this.rewriteReferencePath(referencePath, referencePathDir);
+            }
+            // Emit the line.
+            wrapped.push(line);
+            return wrapped;
+        };
+        return BluePromise.reduce(lines, reducer, []).then(function (wrapped) {
+            return wrapped.join('\n');
+        });
+    };
     // Rewrite the reference path relative to the destination typings directory.
     // - *referencePath*: TypeScript reference path
     // - *dir*: Directory for resolving relative path
@@ -338,23 +359,30 @@ var TypeScriptPackageInstaller = (function () {
         var newPath;
         // If we are referring to a path that is one of the secondary declarations that we are going to copy, then we don't
         // have to modify it.
-        if (this.isSecondaryDeclaration(referencePath)) {
+        if (this.isSecondaryDeclaration(referencePath, dir)) {
             newPath = referencePath;
         }
         else {
-            var localTypingsSubdir = path.resolve(path.join(this.config.localTypingsDir, this.config.typingsSubdir));
+            // Figure out where we are relative to the main declaration dir.
+            var mainDeclarationDir = this.determineMainDeclarationDir();
+            var sourceDir = path.relative(mainDeclarationDir, dir);
+            // Identify the subdirectory of our local typings directory where we would be, if we were installed in our local
+            // typings directory.
+            var localTypingsSubdir = path.resolve(path.join(this.config.localTypingsDir, this.config.typingsSubdir, sourceDir));
+            // Figure out what the reference path is.
             var currentPath = path.resolve(dir, referencePath);
+            // Calculate the path relative to where we would be installed within our local typings directory.
             newPath = path.relative(localTypingsSubdir, currentPath);
         }
         return '/// <reference path="' + newPath + '" />';
     };
     // Check if the reference path refers to one of the secondary declarations.
-    TypeScriptPackageInstaller.prototype.isSecondaryDeclaration = function (referencePath) {
+    // - *referencePath*: TypeScript reference path
+    // - *dir*: Directory for resolving relative path
+    TypeScriptPackageInstaller.prototype.isSecondaryDeclaration = function (referencePath, dir) {
         assert(this.config);
         assert(_.isArray(this.config.secondaryDeclarations));
-        // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
-        var mainDeclarationDir = this.determineMainDeclarationDir();
-        var resolvedReferencePath = path.resolve(mainDeclarationDir, referencePath);
+        var resolvedReferencePath = path.resolve(dir, referencePath);
         // Check if it matches any of the secondary
         var match = _.find(this.config.secondaryDeclarations, function (secondaryDeclaration) {
             var resolvedSecondaryDeclaration = path.resolve(secondaryDeclaration);
@@ -416,14 +444,24 @@ var TypeScriptPackageInstaller = (function () {
         var destinationFile = path.join(this.exportedTypingsSubdir, sourceRelativePath);
         // Make sure the directory exists.
         var destinationDir = path.dirname(path.resolve(destinationFile));
+        // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
+        var sourceDeclarationDir = path.dirname(path.resolve(sourceFile));
         return this.maybeDo(function () {
             dlog('Creating directory for secondary declaration file:', destinationDir);
             return mkdirpAsync(destinationDir);
         }).then(function () {
             dlog('Copying secondary declaration file:', destinationFile);
+            return fsReadFileAsync(sourceFile, 'utf8');
+        }).then(function (contents) {
+            dlog('Parsing secondary declaration file:', sourceFile);
+            return _this.rewriteSecondaryDeclarationContents(contents, sourceDeclarationDir);
+        }).then(function (wrapped) {
+            dlog('Wrapped secondary declaration file:\n', wrapped);
             return _this.maybeDo(function () {
-                return fsCopyAsync(sourceFile, destinationFile);
+                return fsWriteFileAsync(destinationFile, wrapped);
             });
+        }).catch(function (error) {
+            throw new Error('Secondary declaration file ' + sourceFile + ' could not be wrapped: ' + error.toString());
         });
     };
     // Read the local TSD configuration.
@@ -502,6 +540,8 @@ var TypeScriptPackageInstaller = (function () {
             return BluePromise.resolve();
         }
     };
+    // Recognize reference path lines that form the header.
+    TypeScriptPackageInstaller.referencePathRegex = /^ *\/\/\/ *<reference *path *= *"(.*)" *\/> *$/;
     return TypeScriptPackageInstaller;
 })();
 // Set the version of this tool based on package.json.
