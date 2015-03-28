@@ -556,17 +556,36 @@ describe('ts-pkg-installer', () => {
       });
     });
 
-    it('copies secondary declarations', (done: MochaDone) => {
+    it.only('copies secondary declarations', (done: MochaDone) => {
       var testData = path.join(testDataRoot, 'secondary-declarations');
       run(testData, ['-v'], function (error: Error, stdout: string, stderr: string): void {
         expect(error).to.equal(null);
         expect(stdout).to.equal('');
 
-        var expectedBasenames: string[] = ['index.d.ts', path.join('lib', 'util.d.ts'), path.join('lib', 'foo.d.ts')];
-        _.forEach(expectedBasenames, (expectedBasename: string): void => {
-          var expectedPath: string = path.join(testOutputDir, 'typings', 'secondary-declarations', expectedBasename);
+        var expecteds: string[][] = [
+          [path.join('lib', 'util.d.ts'),
+           '/// <reference path="../typings/bar/bar.d.ts" />\n' +
+           '/// <reference path="foo.d.ts" />\n' +
+           'import foo = require(\'foo\');\n' +
+           'export declare function secondary(): foo.Foo;\n'
+          ],
+          [path.join('lib', 'foo.d.ts'),
+           'declare module "foo" {\n\n' +
+           '  export class Foo {\n' +
+           '    constructor();\n' +
+           '    bar(): void;\n' +
+           '  }\n\n' +
+           '}\n'
+          ]
+        ];
+
+        _.forEach(expecteds, (expected: string[]): void => {
+          var basename: string = expected[0];
+          var expectedContents: string = expected[1];
+          var expectedPath: string = path.join(testOutputDir, 'typings', 'secondary-declarations', basename);
           var actualContents = fs.readFileSync(expectedPath, 'utf8');
-          expect(actualContents).to.be.ok;
+          dlog(basename, actualContents);
+          expect(actualContents, basename).to.deep.equal(expectedContents);
         });
 
         done();
