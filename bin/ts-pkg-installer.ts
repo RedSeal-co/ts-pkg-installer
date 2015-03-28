@@ -2,7 +2,6 @@
 ///<reference path="../typings/commander/commander.d.ts"/>
 ///<reference path="../typings/bluebird/bluebird.d.ts"/>
 ///<reference path="../typings/debug/debug.d.ts"/>
-///<reference path="../typings/fs-extra/fs-extra.d.ts"/>
 ///<reference path="../typings/glob/glob.d.ts"/>
 ///<reference path="../typings/lodash/lodash.d.ts"/>
 ///<reference path="../typings/mkdirp/mkdirp.d.ts"/>
@@ -20,7 +19,7 @@ import assert = require('assert');
 import BluePromise = require('bluebird');
 import commander = require('commander');
 import debug = require('debug');
-import fs = require('fs-extra');
+import fs = require('fs');
 import glob = require('glob');
 import mkdirp = require('mkdirp');
 import path = require('path');
@@ -161,13 +160,6 @@ interface IFsWriteFileAsync {
 }
 var fsWriteFileAsync: IFsWriteFileAsync = <IFsWriteFileAsync> BluePromise.promisify(fs.writeFile);
 
-// ## fsCopyAsync
-// fs.copy that is promisified.
-interface IFsCopyAsync {
-  (source: string, destination: string): BluePromise<void>;
-}
-var fsCopyAsync: IFsCopyAsync = <IFsCopyAsync> BluePromise.promisify(fs.copy);
-
 // ## mkdirp
 interface IMkDirP {
   (path: string): BluePromise<void>;
@@ -184,6 +176,9 @@ enum DeclarationFileState {Header, Body};
 // - Wrap the main declaration file
 // - Copy the main declaration file to the "typings" directory
 class TypeScriptPackageInstaller {
+
+  // Recognize reference path lines that form the header.
+  private static referencePathRegex = /^ *\/\/\/ *<reference *path *= *"(.*)" *\/> *$/;
 
   private options: Options;
   private config: Config;
@@ -398,9 +393,6 @@ class TypeScriptPackageInstaller {
     var commentRegex = /^ *\/\/.*$/;
     var blankRegex = /^ *$/;
 
-    // Recognize reference path lines that form the header.
-    var referencePathRegex = /^ *\/\/\/ *<reference *path *= *"(.*)" *\/> *$/;
-
     // Recognize declarations in the body.
     var declarationRegex = /^(export )?(declare )(.*)$/;
 
@@ -411,7 +403,7 @@ class TypeScriptPackageInstaller {
 
       if (state === DeclarationFileState.Header) {
         // See if we have a reference path (which is a form of comment).
-        var referencePathMatches: string[] = line.match(referencePathRegex);
+        var referencePathMatches: string[] = line.match(TypeScriptPackageInstaller.referencePathRegex);
         var isReferencePath: boolean = referencePathMatches && true;
         if (isReferencePath) {
 
@@ -468,6 +460,37 @@ class TypeScriptPackageInstaller {
       });
   }
 
+  // Rewrite the secondary declaration file whose contents are provided.
+  // - *contents*: Contents of the secondary declaration file (TypeScript *.d.ts file)
+  // - *referencePathDir*: Directory to resolve related reference paths.
+  private rewriteSecondaryDeclarationContents(contents: string, referencePathDir: string): BluePromise<string> {
+    // Process each line in the main declaration file.
+    var lines: string[] = contents.split('\n');
+
+    var reducer = (wrapped: string[], line: string): string[] => {
+
+      // See if we have a reference path.
+      var referencePathMatches: string[] = line.match(TypeScriptPackageInstaller.referencePathRegex);
+      var isReferencePath: boolean = referencePathMatches && true;
+      if (isReferencePath) {
+
+        // Rewrite the reference path relative to the destination typings directory.
+        var referencePath: string = referencePathMatches[1];
+        assert(referencePath);
+        line = this.rewriteReferencePath(referencePath, referencePathDir);
+      }
+
+      // Emit the line.
+      wrapped.push(line);
+      return wrapped;
+    };
+
+    return BluePromise.reduce(lines, reducer, [])
+      .then((wrapped: string[]): string => {
+        return wrapped.join('\n');
+      });
+  }
+
   // Rewrite the reference path relative to the destination typings directory.
   // - *referencePath*: TypeScript reference path
   // - *dir*: Directory for resolving relative path
@@ -480,24 +503,36 @@ class TypeScriptPackageInstaller {
 
     // If we are referring to a path that is one of the secondary declarations that we are going to copy, then we don't
     // have to modify it.
-    if (this.isSecondaryDeclaration(referencePath)) {
+    if (this.isSecondaryDeclaration(referencePath, dir)) {
       newPath = referencePath;
     } else {
-      var localTypingsSubdir: string = path.resolve(path.join(this.config.localTypingsDir, this.config.typingsSubdir));
+
+      // Figure out where we are relative to the main declaration dir.
+      var mainDeclarationDir: string = this.determineMainDeclarationDir();
+      var sourceDir: string = path.relative(mainDeclarationDir, dir);
+
+      // Identify the subdirectory of our local typings directory where we would be, if we were installed in our local
+      // typings directory.
+      var localTypingsSubdir: string =
+        path.resolve(path.join(this.config.localTypingsDir, this.config.typingsSubdir, sourceDir));
+
+      // Figure out what the reference path is.
       var currentPath: string = path.resolve(dir, referencePath);
+
+      // Calculate the path relative to where we would be installed within our local typings directory.
       newPath = path.relative(localTypingsSubdir, currentPath);
     }
     return '/// <reference path="' + newPath + '" />';
   }
 
   // Check if the reference path refers to one of the secondary declarations.
-  private isSecondaryDeclaration(referencePath: string): boolean {
+  // - *referencePath*: TypeScript reference path
+  // - *dir*: Directory for resolving relative path
+  private isSecondaryDeclaration(referencePath: string, dir: string): boolean {
     assert(this.config);
     assert(_.isArray(this.config.secondaryDeclarations));
 
-    // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
-    var mainDeclarationDir: string = this.determineMainDeclarationDir();
-    var resolvedReferencePath: string = path.resolve(mainDeclarationDir, referencePath);
+    var resolvedReferencePath: string = path.resolve(dir, referencePath);
 
     // Check if it matches any of the secondary
     var match: string = _.find(this.config.secondaryDeclarations, (secondaryDeclaration: string): boolean => {
@@ -568,16 +603,31 @@ class TypeScriptPackageInstaller {
     // Make sure the directory exists.
     var destinationDir: string = path.dirname(path.resolve(destinationFile));
 
+    // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
+    var sourceDeclarationDir: string = path.dirname(path.resolve(sourceFile));
+
     return this.maybeDo(
       (): BluePromise<void> => {
         dlog('Creating directory for secondary declaration file:', destinationDir);
         return mkdirpAsync(destinationDir);
       })
-      .then((): BluePromise<void> => {
+      .then((): BluePromise<string> => {
         dlog('Copying secondary declaration file:', destinationFile);
+        return fsReadFileAsync(sourceFile, 'utf8');
+      })
+      .then((contents: string): BluePromise<string> => {
+        dlog('Parsing secondary declaration file:', sourceFile);
+        return this.rewriteSecondaryDeclarationContents(contents, sourceDeclarationDir);
+      })
+      .then((wrapped: string): BluePromise<void> => {
+        dlog('Wrapped secondary declaration file:\n', wrapped);
         return this.maybeDo((): BluePromise<void> => {
-          return fsCopyAsync(sourceFile, destinationFile);
+          return fsWriteFileAsync(destinationFile, wrapped);
         });
+      })
+      .catch((error: any): void => {
+        // Create a more user-friendly error message
+        throw new Error('Secondary declaration file ' + sourceFile + ' could not be wrapped: ' + error.toString());
       });
   }
 
