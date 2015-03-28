@@ -541,7 +541,7 @@ var TypeScriptPackageInstaller = (function () {
         }
     };
     // Recognize reference path lines that form the header.
-    TypeScriptPackageInstaller.referencePathRegex = /^ *\/\/\/ *<reference *path *= *"(.*)" *\/> *$/;
+    TypeScriptPackageInstaller.referencePathRegex = /^ *\/\/\/ *<reference *path *= *['"](.*)["'] *\/> *$/;
     return TypeScriptPackageInstaller;
 })();
 // Set the version of this tool based on package.json.
