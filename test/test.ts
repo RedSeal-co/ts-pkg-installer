@@ -556,7 +556,7 @@ describe('ts-pkg-installer', () => {
       });
     });
 
-    it.only('copies secondary declarations', (done: MochaDone) => {
+    it('copies secondary declarations', (done: MochaDone) => {
       var testData = path.join(testDataRoot, 'secondary-declarations');
       run(testData, ['-v'], function (error: Error, stdout: string, stderr: string): void {
         expect(error).to.equal(null);
@@ -564,7 +564,7 @@ describe('ts-pkg-installer', () => {
 
         var expecteds: string[][] = [
           [path.join('lib', 'util.d.ts'),
-           '/// <reference path="../typings/bar/bar.d.ts" />\n' +
+           '/// <reference path="../../bar/bar.d.ts" />\n' +
            '/// <reference path="foo.d.ts" />\n' +
            'import foo = require(\'foo\');\n' +
            'export declare function secondary(): foo.Foo;\n'
