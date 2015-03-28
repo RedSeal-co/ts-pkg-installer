@@ -514,6 +514,20 @@ describe('ts-pkg-installer', () => {
       });
     });
 
+    it('wraps file with reference paths containing single quotes', (done: MochaDone) => {
+      var testData: string = path.join(testDataRoot, 'reference-path-single-quotes');
+      run(testData, ['-v', '-n'], function (error: Error, stdout: string, stderr: string): void {
+        expect(error).to.equal(null);
+        expect(stderr).to.contain('ts-pkg-installer Wrapped main declaration file:\n' +
+                                  '/// <reference path="../foo/foo.d.ts" />\n' +
+                                  'declare module \'reference-path-single-quotes\' {\n' +
+                                  'export function main(): void;\n' +
+                                  '}\n\n');
+        expect(stdout).to.equal('');
+        done();
+      });
+    });
+
   });
 
   // ### Copy Exported Modules
