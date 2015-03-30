@@ -46,6 +46,7 @@ var Config = (function () {
         this.packageConfig = config.packageConfig || 'package.json';
         this.mainDeclaration = config.mainDeclaration;
         this.secondaryDeclarations = config.secondaryDeclarations || [];
+        this.noWrap = config.noWrap || false;
         this.moduleName = config.moduleName;
         this.localTypingsDir = config.localTypingsDir || 'typings';
         this.exportedTypingsDir = config.exportedTypingsDir;
@@ -274,6 +275,10 @@ var TypeScriptPackageInstaller = (function () {
         var declarationRegex = /^(export )?(declare )(.*)$/;
         // Maintain a state machine, separating the file into header and body sections.
         var state = 0 /* Header */;
+        // We may not be wrapping the main declaration in an ambient external module declaration.
+        if (this.config.noWrap) {
+            dlog('Main ambient external module declaration disabled');
+        }
         var reducer = function (wrapped, line) {
             if (state === 0 /* Header */) {
                 // See if we have a reference path (which is a form of comment).
@@ -292,12 +297,14 @@ var TypeScriptPackageInstaller = (function () {
                     // Stay in header state if we have a comment or blank line.
                     if (!(isComment || isBlank)) {
                         // Transitioning out of header state, so emit the module declaration.
-                        wrapped.push(_this.moduleDeclaration());
+                        if (!(_this.config.noWrap)) {
+                            wrapped.push(_this.moduleDeclaration());
+                        }
                         state = 1 /* Body */;
                     }
                 }
             }
-            if (state === 1 /* Body */) {
+            if (state === 1 /* Body */ && !(_this.config.noWrap)) {
                 // See if we have a declaration of some sort.
                 var declarationMatches = line.match(declarationRegex);
                 var isDeclaration = declarationMatches && true;
@@ -313,14 +320,16 @@ var TypeScriptPackageInstaller = (function () {
             return wrapped;
         };
         return BluePromise.reduce(lines, reducer, []).then(function (wrapped) {
-            // If we're still in the header (i.e. we had no body lines), then emit the module declaration now.
-            if (state === 0 /* Header */) {
-                wrapped.push(_this.moduleDeclaration());
-                state = 1 /* Body */;
+            if (!(_this.config.noWrap)) {
+                // If we're still in the header (i.e. we had no body lines), then emit the module declaration now.
+                if (state === 0 /* Header */) {
+                    wrapped.push(_this.moduleDeclaration());
+                    state = 1 /* Body */;
+                }
+                // End by closing the module declaration
+                wrapped.push('}');
+                wrapped.push('');
             }
-            // End by closing the module declaration
-            wrapped.push('}');
-            wrapped.push('');
             return wrapped.join('\n');
         });
     };
