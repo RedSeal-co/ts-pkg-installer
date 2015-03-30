@@ -178,7 +178,7 @@ enum DeclarationFileState {Header, Body};
 class TypeScriptPackageInstaller {
 
   // Recognize reference path lines that form the header.
-  private static referencePathRegex = /^ *\/\/\/ *<reference *path *= *"(.*)" *\/> *$/;
+  private static referencePathRegex = /^ *\/\/\/ *<reference *path *= *['"](.*)["'] *\/> *$/;
 
   private options: Options;
   private config: Config;
