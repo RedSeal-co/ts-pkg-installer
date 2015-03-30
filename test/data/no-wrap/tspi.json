@@ -1,0 +1,4 @@
+{
+  "secondaryDeclarations": ["foo.d.ts"],
+  "noWrap": true
+}

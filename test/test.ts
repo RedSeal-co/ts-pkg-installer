@@ -528,6 +528,31 @@ describe('ts-pkg-installer', () => {
       });
     });
 
+    it('rewrites reference paths but does not wrap with "noWrap" option', (done: MochaDone) => {
+      var testData: string = path.join(testDataRoot, 'no-wrap');
+      run(testData, ['-v', '-n'], function (error: Error, stdout: string, stderr: string): void {
+        expect(error).to.equal(null);
+        expect(stderr).to.contain('Main ambient external module declaration disabled');
+        expect(stderr).to.contain('ts-pkg-installer Wrapped main declaration file:\n' +
+                                  '/// <reference path="foo.d.ts" />\n' +
+                                  '/// <reference path="../bluebird/bluebird.d.ts" />\n' +
+                                  'declare module \'no-wrap\' {\n' +
+                                  '  import _bar = require(\'__no-wrap/bar\');\n' +
+                                  '  import BluePromise = require(\'bluebird\');\n' +
+                                  '  module NoWrap {\n' +
+                                  '    function main(): void;\n' +
+                                  '  }\n' +
+                                  '  export = NoWrap;\n' +
+                                  '}\n' +
+                                  'declare module \'__no-wrap/bar\' {\n' +
+                                  '  export = bar;\n' +
+                                  '  function bar(): void;\n' +
+                                  '}\n');
+        expect(stdout).to.equal('');
+        done();
+      });
+    });
+
   });
 
   // ### Copy Exported Modules

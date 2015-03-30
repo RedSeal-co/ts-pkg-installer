@@ -73,6 +73,10 @@ class Config {
   // Path to any secondary declaration files that should be exported alongside mainDeclaration.
   secondaryDeclarations: string[];
 
+  // Disable wrapping of main declaration in its own ambient external module declaration.  This is appropriate for
+  // processing declaration files that already contain ambient external module declarations.
+  noWrap: boolean;
+
   // Name of the module as specified in the wrapped declaration file.  By default, this is the name of the NPM package.
   moduleName: string;
 
@@ -99,6 +103,7 @@ class Config {
     this.packageConfig = config.packageConfig || 'package.json';
     this.mainDeclaration = config.mainDeclaration;
     this.secondaryDeclarations = config.secondaryDeclarations || [];
+    this.noWrap = config.noWrap || false;
     this.moduleName = config.moduleName;
     this.localTypingsDir = config.localTypingsDir || 'typings';
     this.exportedTypingsDir = config.exportedTypingsDir;
@@ -399,6 +404,11 @@ class TypeScriptPackageInstaller {
     // Maintain a state machine, separating the file into header and body sections.
     var state: DeclarationFileState = DeclarationFileState.Header;
 
+    // We may not be wrapping the main declaration in an ambient external module declaration.
+    if (this.config.noWrap) {
+      dlog('Main ambient external module declaration disabled');
+    }
+
     var reducer = (wrapped: string[], line: string): string[] => {
 
       if (state === DeclarationFileState.Header) {
@@ -420,13 +430,15 @@ class TypeScriptPackageInstaller {
           // Stay in header state if we have a comment or blank line.
           if (! (isComment || isBlank)) {
             // Transitioning out of header state, so emit the module declaration.
-            wrapped.push(this.moduleDeclaration());
+            if (!(this.config.noWrap)) {
+              wrapped.push(this.moduleDeclaration());
+            }
             state = DeclarationFileState.Body;
           }
         }
       }
 
-      if (state === DeclarationFileState.Body) {
+      if (state === DeclarationFileState.Body && !(this.config.noWrap)) {
         // See if we have a declaration of some sort.
         var declarationMatches: string[] = line.match(declarationRegex);
         var isDeclaration: boolean = declarationMatches && true;
@@ -446,15 +458,17 @@ class TypeScriptPackageInstaller {
     return BluePromise.reduce(lines, reducer, [])
       .then((wrapped: string[]): string => {
 
-        // If we're still in the header (i.e. we had no body lines), then emit the module declaration now.
-        if (state === DeclarationFileState.Header) {
-          wrapped.push(this.moduleDeclaration());
-          state = DeclarationFileState.Body;
-        }
+        if (!(this.config.noWrap)) {
+          // If we're still in the header (i.e. we had no body lines), then emit the module declaration now.
+          if (state === DeclarationFileState.Header) {
+            wrapped.push(this.moduleDeclaration());
+            state = DeclarationFileState.Body;
+          }
 
-        // End by closing the module declaration
-        wrapped.push('}');
-        wrapped.push('');
+          // End by closing the module declaration
+          wrapped.push('}');
+          wrapped.push('');
+        }
 
         return wrapped.join('\n');
       });
