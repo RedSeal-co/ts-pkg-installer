@@ -1,6 +1,6 @@
 {
   "name": "ts-pkg-installer",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "TypeScript package installer",
   "main": "bin/ts-pkg-installer.js",
   "scripts": {
