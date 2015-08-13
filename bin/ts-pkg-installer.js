@@ -34,7 +34,10 @@ var Options = (function () {
 var defaultOptions = new Options();
 // ## CLI
 // Define the CLI.
-commander.option('-f, --config-file <path>', 'Config file [' + defaultOptions.configFile + ']', defaultOptions.configFile).option('-n, --dry-run', 'Dry run (display what would happen without taking action)').option('-v, --verbose', 'Verbose logging');
+commander
+    .option('-f, --config-file <path>', 'Config file [' + defaultOptions.configFile + ']', defaultOptions.configFile)
+    .option('-n, --dry-run', 'Dry run (display what would happen without taking action)')
+    .option('-v, --verbose', 'Verbose logging');
 var debugNamespace = 'ts-pkg-installer';
 var dlog = debug(debugNamespace);
 // ## Config
@@ -103,19 +106,15 @@ var TypeScriptPackageInstaller = (function () {
     TypeScriptPackageInstaller.prototype.main = function () {
         var _this = this;
         dlog('main');
-        return this.readConfigFile().then(function () {
+        return this.readConfigFile()
+            .then(function () {
             if (_this.shouldRun()) {
-                return _this.readPackageConfigFile().then(function () {
-                    return _this.determineExportedTypingsSubdir();
-                }).then(function () {
-                    return _this.wrapMainDeclaration();
-                }).then(function () {
-                    return _this.copyExportedDeclarations();
-                }).then(function () {
-                    return _this.readLocalTsdConfigFile();
-                }).then(function () {
-                    return _this.maybeHaulTypings();
-                });
+                return _this.readPackageConfigFile()
+                    .then(function () { return _this.determineExportedTypingsSubdir(); })
+                    .then(function () { return _this.wrapMainDeclaration(); })
+                    .then(function () { return _this.copyExportedDeclarations(); })
+                    .then(function () { return _this.readLocalTsdConfigFile(); })
+                    .then(function () { return _this.maybeHaulTypings(); });
             }
             else {
                 return BluePromise.resolve();
@@ -142,7 +141,8 @@ var TypeScriptPackageInstaller = (function () {
         var _this = this;
         var configFile = this.options.configFile;
         var readFromFile;
-        return fsExistsAsync(configFile).then(function (exists) {
+        return fsExistsAsync(configFile)
+            .then(function (exists) {
             if (exists) {
                 dlog('Reading config file: ' + configFile);
                 readFromFile = true;
@@ -159,7 +159,8 @@ var TypeScriptPackageInstaller = (function () {
                 // Parse an empty JSON object to use the defaults.
                 return BluePromise.resolve('{}');
             }
-        }).then(function (contents) {
+        })
+            .then(function (contents) {
             if (readFromFile) {
                 dlog('Read config file: ' + configFile);
                 dlog('Config file contents:\n' + contents);
@@ -175,7 +176,8 @@ var TypeScriptPackageInstaller = (function () {
         var parentPath = path.dirname(process.cwd());
         var parentDir = path.basename(parentPath);
         var grandparentDir = path.basename(path.dirname(parentPath));
-        var should = this.config.force || parentDir === 'node_modules' || (parentDir.charAt(0) === '@' && grandparentDir === 'node_modules');
+        var should = this.config.force || parentDir === 'node_modules' ||
+            (parentDir.charAt(0) === '@' && grandparentDir === 'node_modules');
         if (this.config.force) {
             dlog('Forced to run');
         }
@@ -190,10 +192,13 @@ var TypeScriptPackageInstaller = (function () {
         assert(this.config && this.config.packageConfig);
         var packageConfigFile = this.config.packageConfig;
         dlog('Reading package config file: ' + packageConfigFile);
-        return fsReadFileAsync(packageConfigFile, 'utf8').then(function (contents) {
+        return fsReadFileAsync(packageConfigFile, 'utf8')
+            .then(function (contents) {
             dlog('Read package config file: ' + packageConfigFile);
             _this.packageConfig = new PackageConfig(JSON.parse(contents));
-        }).catch(function (error) {
+        })
+            .catch(function (error) {
+            // Create a more user-friendly error message
             throw new Error('Package config file could not be read: ' + packageConfigFile);
         });
     };
@@ -203,11 +208,13 @@ var TypeScriptPackageInstaller = (function () {
     };
     // Determine the appropriate directory in which to export module declaration (*.d.ts) files.
     TypeScriptPackageInstaller.prototype.exportedTypingsDir = function () {
-        return this.config.exportedTypingsDir || (this.isPackageScoped() ? path.join('..', '..', '..', 'typings') : path.join('..', '..', 'typings'));
+        return this.config.exportedTypingsDir ||
+            (this.isPackageScoped() ? path.join('..', '..', '..', 'typings') : path.join('..', '..', 'typings'));
     };
     // Determine the appropriate directory in which to export the TSD config (tsd.json) file.
     TypeScriptPackageInstaller.prototype.exportedTsdConfigPath = function () {
-        return this.config.exportedTsdConfig || (this.isPackageScoped() ? path.join('..', '..', 'tsd.json') : path.join('..', 'tsd.json'));
+        return this.config.exportedTsdConfig ||
+            (this.isPackageScoped() ? path.join('..', '..', 'tsd.json') : path.join('..', 'tsd.json'));
     };
     // Determine where we will write our main declaration file.
     // - Side effect: Sets `this.config.typingsSubdir`, if not specified in config file
@@ -229,13 +236,17 @@ var TypeScriptPackageInstaller = (function () {
         // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
         var mainDeclarationDir = this.determineMainDeclarationDir();
         dlog('Reading main declaration file: ' + mainDeclarationFile);
-        return fsReadFileAsync(mainDeclarationFile, 'utf8').then(function (contents) {
+        return fsReadFileAsync(mainDeclarationFile, 'utf8')
+            .then(function (contents) {
             dlog('Parsing main declaration file: ' + mainDeclarationFile);
             return _this.wrapMainDeclarationContents(contents, mainDeclarationDir);
-        }).then(function (wrapped) {
+        })
+            .then(function (wrapped) {
             dlog('Wrapped main declaration file:\n' + wrapped);
             _this.wrappedMainDeclaration = wrapped;
-        }).catch(function (error) {
+        })
+            .catch(function (error) {
+            // Create a more user-friendly error message
             throw new Error('Main declaration file could not be wrapped: ' + error.toString());
         });
     };
@@ -274,13 +285,13 @@ var TypeScriptPackageInstaller = (function () {
         // Recognize declarations in the body.
         var declarationRegex = /^(export )?(declare )(.*)$/;
         // Maintain a state machine, separating the file into header and body sections.
-        var state = 0 /* Header */;
+        var state = DeclarationFileState.Header;
         // We may not be wrapping the main declaration in an ambient external module declaration.
         if (this.config.noWrap) {
             dlog('Main ambient external module declaration disabled');
         }
         var reducer = function (wrapped, line) {
-            if (state === 0 /* Header */) {
+            if (state === DeclarationFileState.Header) {
                 // See if we have a reference path (which is a form of comment).
                 var referencePathMatches = line.match(TypeScriptPackageInstaller.referencePathRegex);
                 var isReferencePath = referencePathMatches && true;
@@ -300,11 +311,11 @@ var TypeScriptPackageInstaller = (function () {
                         if (!(_this.config.noWrap)) {
                             wrapped.push(_this.moduleDeclaration());
                         }
-                        state = 1 /* Body */;
+                        state = DeclarationFileState.Body;
                     }
                 }
             }
-            if (state === 1 /* Body */ && !(_this.config.noWrap)) {
+            if (state === DeclarationFileState.Body && !(_this.config.noWrap)) {
                 // See if we have a declaration of some sort.
                 var declarationMatches = line.match(declarationRegex);
                 var isDeclaration = declarationMatches && true;
@@ -319,12 +330,13 @@ var TypeScriptPackageInstaller = (function () {
             }
             return wrapped;
         };
-        return BluePromise.reduce(lines, reducer, []).then(function (wrapped) {
+        return BluePromise.reduce(lines, reducer, [])
+            .then(function (wrapped) {
             if (!(_this.config.noWrap)) {
                 // If we're still in the header (i.e. we had no body lines), then emit the module declaration now.
-                if (state === 0 /* Header */) {
+                if (state === DeclarationFileState.Header) {
                     wrapped.push(_this.moduleDeclaration());
-                    state = 1 /* Body */;
+                    state = DeclarationFileState.Body;
                 }
                 // End by closing the module declaration
                 wrapped.push('}');
@@ -354,7 +366,8 @@ var TypeScriptPackageInstaller = (function () {
             wrapped.push(line);
             return wrapped;
         };
-        return BluePromise.reduce(lines, reducer, []).then(function (wrapped) {
+        return BluePromise.reduce(lines, reducer, [])
+            .then(function (wrapped) {
             return wrapped.join('\n');
         });
     };
@@ -410,7 +423,8 @@ var TypeScriptPackageInstaller = (function () {
     // Copy exported declarations into typings.
     TypeScriptPackageInstaller.prototype.copyExportedDeclarations = function () {
         var _this = this;
-        return this.copyMainModuleDeclaration().then(function () { return _this.copySecondaryDeclarations(); });
+        return this.copyMainModuleDeclaration()
+            .then(function () { return _this.copySecondaryDeclarations(); });
     };
     // Copy the wrapped main module declaration into typings.
     TypeScriptPackageInstaller.prototype.copyMainModuleDeclaration = function () {
@@ -420,9 +434,8 @@ var TypeScriptPackageInstaller = (function () {
         assert(this.wrappedMainDeclaration);
         // Create the directory.
         dlog('Creating directory for main declaration file: ' + this.exportedTypingsSubdir);
-        return this.maybeDo(function () {
-            return mkdirpAsync(_this.exportedTypingsSubdir);
-        }).then(function () {
+        return this.maybeDo(function () { return mkdirpAsync(_this.exportedTypingsSubdir); })
+            .then(function () {
             // Use the same basename.
             var basename = path.basename(_this.determineMainDeclaration());
             var mainDeclaration = path.join(_this.exportedTypingsSubdir, basename);
@@ -438,9 +451,7 @@ var TypeScriptPackageInstaller = (function () {
         assert(this.config);
         assert(_.isArray(this.config.secondaryDeclarations));
         var promises = _.map(this.config.secondaryDeclarations, function (basename) { return _this.copySecondaryDeclaration(basename); });
-        return BluePromise.all(promises).then(function () {
-            return;
-        });
+        return BluePromise.all(promises).then(function () { return; });
     };
     // Copy a single secondary declaration (as-is) into typings.
     TypeScriptPackageInstaller.prototype.copySecondaryDeclaration = function (sourceFile) {
@@ -458,18 +469,23 @@ var TypeScriptPackageInstaller = (function () {
         return this.maybeDo(function () {
             dlog('Creating directory for secondary declaration file:', destinationDir);
             return mkdirpAsync(destinationDir);
-        }).then(function () {
+        })
+            .then(function () {
             dlog('Copying secondary declaration file:', destinationFile);
             return fsReadFileAsync(sourceFile, 'utf8');
-        }).then(function (contents) {
+        })
+            .then(function (contents) {
             dlog('Parsing secondary declaration file:', sourceFile);
             return _this.rewriteSecondaryDeclarationContents(contents, sourceDeclarationDir);
-        }).then(function (wrapped) {
+        })
+            .then(function (wrapped) {
             dlog('Wrapped secondary declaration file:\n', wrapped);
             return _this.maybeDo(function () {
                 return fsWriteFileAsync(destinationFile, wrapped);
             });
-        }).catch(function (error) {
+        })
+            .catch(function (error) {
+            // Create a more user-friendly error message
             throw new Error('Secondary declaration file ' + sourceFile + ' could not be wrapped: ' + error.toString());
         });
     };
@@ -477,7 +493,8 @@ var TypeScriptPackageInstaller = (function () {
     TypeScriptPackageInstaller.prototype.readLocalTsdConfigFile = function () {
         var _this = this;
         assert(this.config && this.config.localTsdConfig);
-        return this.readTsdConfigFile(this.config.localTsdConfig).then(function (config) {
+        return this.readTsdConfigFile(this.config.localTsdConfig)
+            .then(function (config) {
             _this.localTsdConfig = config;
         });
     };
@@ -485,17 +502,20 @@ var TypeScriptPackageInstaller = (function () {
     TypeScriptPackageInstaller.prototype.readExportedTsdConfigFile = function () {
         var _this = this;
         assert(this.config && this.exportedTsdConfigPath());
-        return this.readTsdConfigFile(this.exportedTsdConfigPath()).then(function (config) {
+        return this.readTsdConfigFile(this.exportedTsdConfigPath())
+            .then(function (config) {
             _this.exportedTsdConfig = config;
         });
     };
     // Read the specified TSD configuration.  Return null if file does not exist.
     TypeScriptPackageInstaller.prototype.readTsdConfigFile = function (path) {
         dlog('Reading TSD config file: ' + path);
-        return fsReadFileAsync(path, 'utf8').then(function (contents) {
+        return fsReadFileAsync(path, 'utf8')
+            .then(function (contents) {
             dlog('Read TSD config file: ' + path);
             return new util.TsdConfig(JSON.parse(contents));
-        }).catch(function (error) {
+        })
+            .catch(function (error) {
             // It's OK if the file isn't there.
             dlog('Ignoring error reading TSD config file: ' + path + ': ' + error.toString());
             return null;
@@ -510,7 +530,8 @@ var TypeScriptPackageInstaller = (function () {
             return BluePromise.resolve();
         }
         else {
-            return this.readExportedTsdConfigFile().then(function () {
+            return this.readExportedTsdConfigFile()
+                .then(function () {
                 _this.haulTypings();
             });
         }
@@ -556,7 +577,8 @@ var TypeScriptPackageInstaller = (function () {
 // Set the version of this tool based on package.json.
 function setVersion() {
     var packageJsonFile = path.join(__dirname, '..', 'package.json');
-    return readPackageJsonAsync(packageJsonFile).then(function (packageJson) {
+    return readPackageJsonAsync(packageJsonFile)
+        .then(function (packageJson) {
         var version = packageJson.version;
         dlog('Version:', version);
         commander.version(version);
@@ -564,7 +586,8 @@ function setVersion() {
     });
 }
 // Determine the version before parsing command-line.
-setVersion().then(function () {
+setVersion()
+    .then(function () {
     // Parse command line arguments.
     commander.parse(process.argv);
     dlog('commander:\n' + JSON.stringify(commander, null, 2));
@@ -576,7 +599,8 @@ setVersion().then(function () {
         // Retrieve the options (which are stored as undeclared members of the command object).
         var options = new Options(commander);
         var mgr = new TypeScriptPackageInstaller(options);
-        mgr.main().catch(function (err) {
+        mgr.main()
+            .catch(function (err) {
             dlog(err.toString());
             process.stderr.write(__filename + ': ' + err.toString() + '\n');
             process.exit(1);

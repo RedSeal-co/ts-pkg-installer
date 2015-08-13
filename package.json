@@ -28,7 +28,7 @@
     "rimraf": "=2.2.8",
     "tsd": "=0.6.1",
     "tslint": "=2.1.1",
-    "typescript": "=1.4.1"
+    "typescript": "=1.5.3"
   },
   "dependencies": {
     "bluebird": "=2.9.12",
