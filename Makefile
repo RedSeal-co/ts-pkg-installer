@@ -1,5 +1,6 @@
 .PHONY: all install install-npm install-tsd lint test unittest cucumber compile
 .PHONY: clean clean-doc clean-obj clean-tsd clean-npm clean-unittest clean-cucumber
+.PHONY: update-npm update-tsd
 
 default: all
 
@@ -51,6 +52,25 @@ unittest: lint compile
 
 cucumber: lint compile
 	./node_modules/.bin/cucumber-js --tags '~@todo'
+
+PKGS=leaf1 leaf2 spine
+PKGS_UPDATE_NPM=$(patsubst %,%-update-npm,$(PKGS))
+PKGS_UPDATE_TSD=$(patsubst %,%-update-tsd,$(PKGS))
+.PHONY: $(PKGS_UPDATE_NPM)
+.PHONY: $(PKGS_UPDATE_TSD)
+
+update-npm: $(PKGS_UPDATE_NPM)
+	npm-check-updates -u
+	npm update
+
+$(PKGS_UPDATE_NPM): %-update-npm:
+	cd test/data/repo/$* && npm-check-updates -u
+
+update-tsd: $(PKGS_UPDATE_TSD)
+	$(TSD) update --overwrite --save
+
+$(PKGS_UPDATE_TSD): %-update-tsd:
+	cd test/data/repo/$* && ../../../../$(TSD) update --overwrite --save
 
 TS_SRC=$(filter-out %.d.ts,$(wildcard bin/*.ts test/*.ts test/data/*/*.ts test/data/*/*/*.ts features/step_definitions/*.ts))
 TS_OBJ=$(patsubst %.ts,%.js,$(TS_SRC))
