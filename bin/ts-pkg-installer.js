@@ -11,16 +11,16 @@
 require('source-map-support').install();
 var _ = require('lodash');
 var assert = require('assert');
-var BluePromise = require('bluebird');
 var commander = require('commander');
 var debug = require('debug');
 var fs = require('fs');
 var mkdirp = require('mkdirp');
+var P = require('bluebird');
 var path = require('path');
 // There is no DTS for this package, but we will promisify it later.
 var readPackageJson = require('read-package-json');
 var util = require('./util');
-BluePromise.longStackTraces();
+P.longStackTraces();
 // Command-line options, describing the structure of options in commander.
 var Options = (function () {
     function Options(options) {
@@ -117,7 +117,7 @@ var TypeScriptPackageInstaller = (function () {
                     .then(function () { return _this.maybeHaulTypings(); });
             }
             else {
-                return BluePromise.resolve();
+                return P.resolve();
             }
         });
     };
@@ -157,7 +157,7 @@ var TypeScriptPackageInstaller = (function () {
                 // Otherwise, just use the defaults (as if parsing an empty config file).
                 readFromFile = false;
                 // Parse an empty JSON object to use the defaults.
-                return BluePromise.resolve('{}');
+                return P.resolve('{}');
             }
         })
             .then(function (contents) {
@@ -330,7 +330,7 @@ var TypeScriptPackageInstaller = (function () {
             }
             return wrapped;
         };
-        return BluePromise.reduce(lines, reducer, [])
+        return P.reduce(lines, reducer, [])
             .then(function (wrapped) {
             if (!(_this.config.noWrap)) {
                 // If we're still in the header (i.e. we had no body lines), then emit the module declaration now.
@@ -366,7 +366,7 @@ var TypeScriptPackageInstaller = (function () {
             wrapped.push(line);
             return wrapped;
         };
-        return BluePromise.reduce(lines, reducer, [])
+        return P.reduce(lines, reducer, [])
             .then(function (wrapped) {
             return wrapped.join('\n');
         });
@@ -451,7 +451,7 @@ var TypeScriptPackageInstaller = (function () {
         assert(this.config);
         assert(_.isArray(this.config.secondaryDeclarations));
         var promises = _.map(this.config.secondaryDeclarations, function (basename) { return _this.copySecondaryDeclaration(basename); });
-        return BluePromise.all(promises).then(function () { return; });
+        return P.all(promises).then(function () { return; });
     };
     // Copy a single secondary declaration (as-is) into typings.
     TypeScriptPackageInstaller.prototype.copySecondaryDeclaration = function (sourceFile) {
@@ -527,7 +527,7 @@ var TypeScriptPackageInstaller = (function () {
         // If we have no typings, we don't have anything to do.
         if (!this.localTsdConfig) {
             dlog('No TSD typings to haul');
-            return BluePromise.resolve();
+            return P.resolve();
         }
         else {
             return this.readExportedTsdConfigFile()
@@ -567,7 +567,7 @@ var TypeScriptPackageInstaller = (function () {
             return action();
         }
         else {
-            return BluePromise.resolve();
+            return P.resolve();
         }
     };
     // Recognize reference path lines that form the header.
