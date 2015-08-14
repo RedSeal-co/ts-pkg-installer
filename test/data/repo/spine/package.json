@@ -13,10 +13,10 @@
   "author": "Matt Frantz <mfrantz@redsealnetworks.com>",
   "license": "ISC",
   "devDependencies": {
-    "chai": "=1.10.0",
-    "mocha": "=2.1.0",
+    "chai": "=3.2.0",
+    "mocha": "=2.2.5",
     "tsd": "=0.6.1",
-    "tslint": "=1.0.1",
+    "tslint": "=2.4.2",
     "typescript": "=1.5.3"
   }
 }
