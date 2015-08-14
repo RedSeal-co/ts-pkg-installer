@@ -4,7 +4,6 @@
 ///<reference path="../typings/debug/debug.d.ts"/>
 ///<reference path="../typings/glob/glob.d.ts"/>
 ///<reference path="../typings/lodash/lodash.d.ts"/>
-///<reference path="../typings/mkdirp/mkdirp.d.ts"/>
 ///<reference path="../typings/node/node.d.ts"/>
 
 ///<reference path="./util.ts"/>
@@ -18,9 +17,8 @@ import _ = require('lodash');
 import assert = require('assert');
 import commander = require('commander');
 import debug = require('debug');
-import fs = require('fs');
+import fs = require('./fs');
 import glob = require('glob');
-import mkdirp = require('mkdirp');
 import P = require('bluebird');
 import path = require('path');
 
@@ -128,48 +126,26 @@ class PackageConfig {
 }
 
 // ## readPackageJsonAsync
-interface IReadPackageJsonAsync {
-  (packageFile: string): BluePromise<string>;
+interface ReadPackageJson {
+  (packageFile: string, callback: (err: Error, contents: string) => void): void;
 }
-var readPackageJsonAsync: IReadPackageJsonAsync = <IReadPackageJsonAsync> BluePromise.promisify(readPackageJson);
-
-// ## fsExistsAsync
-// Special handling for fs.exists, which does not conform to Node.js standards for async interfaces.
-
-// We must first normalize the fs.exists API to give it the node-like callback signature.
-function normalizedFsExists(file: string, callback: (error: Error, result: boolean) => void) {
-  fs.exists(file, (exists: boolean): void => {
-    callback(null, exists);
-  });
-}
-
-// Next, we wrap the normalized API with bluebird to make it return a promise.
-interface IFsExistsAsync {
-  (file: string): BluePromise<boolean>;
-}
-var fsExistsAsync: IFsExistsAsync = <IFsExistsAsync> BluePromise.promisify(normalizedFsExists);
-
-// ## fsReadFileAsync
-// fs.readFile conforms to Node.js standards, so we only need to define the interface to make up for the deficiency in
-// the bluebird TSD.
-interface IFsReadFileAsync {
-  (file: string, encoding: string): BluePromise<string>;
-}
-var fsReadFileAsync: IFsReadFileAsync = <IFsReadFileAsync> BluePromise.promisify(fs.readFile);
-
-// ## fsWriteFileAsync
-// fs.writeFile conforms to Node.js standards, so we only need to define the interface to make up for the deficiency in
-// the bluebird TSD.
-interface IFsWriteFileAsync {
-  (file: string, contents: string): BluePromise<void>;
-}
-var fsWriteFileAsync: IFsWriteFileAsync = <IFsWriteFileAsync> BluePromise.promisify(fs.writeFile);
+var readPackageJsonAsync = P.promisify(<ReadPackageJson>readPackageJson);
 
 // ## mkdirp
-interface IMkDirP {
-  (path: string): BluePromise<void>;
+// Create a directory, and then dlog the real path created.
+function mkdirp(dir: string): P<void> {
+  return fs.mkdirpP(dir)
+    .then((made: string) => fs.realpathP(dir))
+    .then((realpath: string) => { dlog('Created', realpath); });
 }
-var mkdirpAsync: IMkDirP = <IMkDirP> BluePromise.promisify(mkdirp);
+
+// ## writeFile
+// Write a file, and then dlog the real path written.
+function writeFile(filePath: string, contents: string): P<void> {
+  return fs.writeFileP(filePath, contents)
+    .then(() => fs.realpathP(filePath))
+    .then((realpath: string) => { dlog('Wrote', realpath); });
+}
 
 // ### DeclarationFileState
 // Maintain a state machine, separating the file into header and body sections.
@@ -241,12 +217,12 @@ class TypeScriptPackageInstaller {
   private readConfigFile(): P<void> {
     var configFile = this.options.configFile;
     var readFromFile: boolean;
-    return fsExistsAsync(configFile)
-      .then((exists: boolean): BluePromise<string> => {
+    return fs.existsP(configFile)
+      .then((exists: boolean): P<string> => {
         if (exists) {
           dlog('Reading config file: ' + configFile);
           readFromFile = true;
-          return fsReadFileAsync(configFile, 'utf8');
+          return fs.readFileP(configFile, 'utf8');
         } else {
           dlog('Config file not found: ' + configFile);
 
@@ -290,11 +266,11 @@ class TypeScriptPackageInstaller {
   }
 
   // Read the package configuration.
-  private readPackageConfigFile(): BluePromise<void> {
+  private readPackageConfigFile(): P<void> {
     assert(this.config && this.config.packageConfig);
     var packageConfigFile: string = this.config.packageConfig;
     dlog('Reading package config file: ' + packageConfigFile);
-    return fsReadFileAsync(packageConfigFile, 'utf8')
+    return fs.readFileP(packageConfigFile, 'utf8')
       .then((contents: string): void => {
         dlog('Read package config file: ' + packageConfigFile);
         this.packageConfig = new PackageConfig(JSON.parse(contents));
@@ -346,8 +322,8 @@ class TypeScriptPackageInstaller {
     var mainDeclarationDir: string = this.determineMainDeclarationDir();
 
     dlog('Reading main declaration file: ' + mainDeclarationFile);
-    return fsReadFileAsync(mainDeclarationFile, 'utf8')
-      .then((contents: string): BluePromise<string> => {
+    return fs.readFileP(mainDeclarationFile, 'utf8')
+      .then((contents: string): P<string> => {
         dlog('Parsing main declaration file: ' + mainDeclarationFile);
         return this.wrapMainDeclarationContents(contents, mainDeclarationDir);
       })
@@ -580,15 +556,13 @@ class TypeScriptPackageInstaller {
 
     // Create the directory.
     dlog('Creating directory for main declaration file: ' + this.exportedTypingsSubdir);
-    return this.maybeDo((): BluePromise<void> => { return mkdirpAsync(this.exportedTypingsSubdir); })
-      .then((): BluePromise<void> => {
+    return this.maybeDo((): P<void> => mkdirp(this.exportedTypingsSubdir))
+      .then((): P<void> => {
         // Use the same basename.
         var basename: string = path.basename(this.determineMainDeclaration());
         var mainDeclaration: string = path.join(this.exportedTypingsSubdir, basename);
         dlog('Writing main declaration file: ' + mainDeclaration);
-        return this.maybeDo((): BluePromise<void> => {
-          return fsWriteFileAsync(mainDeclaration, this.wrappedMainDeclaration);
-        });
+        return this.maybeDo((): P<void> => writeFile(mainDeclaration, this.wrappedMainDeclaration));
       });
   }
 
@@ -623,11 +597,11 @@ class TypeScriptPackageInstaller {
     return this.maybeDo(
       (): P<void> => {
         dlog('Creating directory for secondary declaration file:', destinationDir);
-        return mkdirpAsync(destinationDir);
+        return mkdirp(destinationDir);
       })
       .then((): P<string> => {
         dlog('Copying secondary declaration file:', destinationFile);
-        return fsReadFileAsync(sourceFile, 'utf8');
+        return fs.readFileP(sourceFile, 'utf8');
       })
       .then((contents: string): P<string> => {
         dlog('Parsing secondary declaration file:', sourceFile);
@@ -635,9 +609,7 @@ class TypeScriptPackageInstaller {
       })
       .then((wrapped: string): P<void> => {
         dlog('Wrapped secondary declaration file:\n', wrapped);
-        return this.maybeDo((): BluePromise<void> => {
-          return fsWriteFileAsync(destinationFile, wrapped);
-        });
+        return this.maybeDo((): P<void> => writeFile(destinationFile, wrapped));
       })
       .catch((error: any): void => {
         // Create a more user-friendly error message
@@ -666,7 +638,7 @@ class TypeScriptPackageInstaller {
   // Read the specified TSD configuration.  Return null if file does not exist.
   private readTsdConfigFile(path: string): P<util.TsdConfig> {
     dlog('Reading TSD config file: ' + path);
-    return fsReadFileAsync(path, 'utf8')
+    return fs.readFileP(path, 'utf8')
       .then((contents: string): util.TsdConfig => {
         dlog('Read TSD config file: ' + path);
         return new util.TsdConfig(JSON.parse(contents));
@@ -715,9 +687,7 @@ class TypeScriptPackageInstaller {
     // Write the resulting file.
     var contents: string = JSON.stringify(this.exportedTsdConfig, null, 2) + '\n';
     dlog('Combined TSD typings:\n' + contents);
-    return this.maybeDo((): BluePromise<void> => {
-      return fsWriteFileAsync(this.exportedTsdConfigPath(), contents);
-    });
+    return this.maybeDo((): P<void> => writeFile(this.exportedTsdConfigPath(), contents));
   }
 
   // Allow conditional execution based on dry run mode.

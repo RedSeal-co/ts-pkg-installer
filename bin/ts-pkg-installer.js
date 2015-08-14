@@ -4,7 +4,6 @@
 ///<reference path="../typings/debug/debug.d.ts"/>
 ///<reference path="../typings/glob/glob.d.ts"/>
 ///<reference path="../typings/lodash/lodash.d.ts"/>
-///<reference path="../typings/mkdirp/mkdirp.d.ts"/>
 ///<reference path="../typings/node/node.d.ts"/>
 ///<reference path="./util.ts"/>
 'use strict';
@@ -13,8 +12,7 @@ var _ = require('lodash');
 var assert = require('assert');
 var commander = require('commander');
 var debug = require('debug');
-var fs = require('fs');
-var mkdirp = require('mkdirp');
+var fs = require('./fs');
 var P = require('bluebird');
 var path = require('path');
 // There is no DTS for this package, but we will promisify it later.
@@ -70,19 +68,21 @@ var PackageConfig = (function () {
     }
     return PackageConfig;
 })();
-var readPackageJsonAsync = BluePromise.promisify(readPackageJson);
-// ## fsExistsAsync
-// Special handling for fs.exists, which does not conform to Node.js standards for async interfaces.
-// We must first normalize the fs.exists API to give it the node-like callback signature.
-function normalizedFsExists(file, callback) {
-    fs.exists(file, function (exists) {
-        callback(null, exists);
-    });
+var readPackageJsonAsync = P.promisify(readPackageJson);
+// ## mkdirp
+// Create a directory, and then dlog the real path created.
+function mkdirp(dir) {
+    return fs.mkdirpP(dir)
+        .then(function (made) { return fs.realpathP(dir); })
+        .then(function (realpath) { dlog('Created', realpath); });
 }
-var fsExistsAsync = BluePromise.promisify(normalizedFsExists);
-var fsReadFileAsync = BluePromise.promisify(fs.readFile);
-var fsWriteFileAsync = BluePromise.promisify(fs.writeFile);
-var mkdirpAsync = BluePromise.promisify(mkdirp);
+// ## writeFile
+// Write a file, and then dlog the real path written.
+function writeFile(filePath, contents) {
+    return fs.writeFileP(filePath, contents)
+        .then(function () { return fs.realpathP(filePath); })
+        .then(function (realpath) { dlog('Wrote', realpath); });
+}
 // ### DeclarationFileState
 // Maintain a state machine, separating the file into header and body sections.
 var DeclarationFileState;
@@ -141,12 +141,12 @@ var TypeScriptPackageInstaller = (function () {
         var _this = this;
         var configFile = this.options.configFile;
         var readFromFile;
-        return fsExistsAsync(configFile)
+        return fs.existsP(configFile)
             .then(function (exists) {
             if (exists) {
                 dlog('Reading config file: ' + configFile);
                 readFromFile = true;
-                return fsReadFileAsync(configFile, 'utf8');
+                return fs.readFileP(configFile, 'utf8');
             }
             else {
                 dlog('Config file not found: ' + configFile);
@@ -192,7 +192,7 @@ var TypeScriptPackageInstaller = (function () {
         assert(this.config && this.config.packageConfig);
         var packageConfigFile = this.config.packageConfig;
         dlog('Reading package config file: ' + packageConfigFile);
-        return fsReadFileAsync(packageConfigFile, 'utf8')
+        return fs.readFileP(packageConfigFile, 'utf8')
             .then(function (contents) {
             dlog('Read package config file: ' + packageConfigFile);
             _this.packageConfig = new PackageConfig(JSON.parse(contents));
@@ -236,7 +236,7 @@ var TypeScriptPackageInstaller = (function () {
         // Determine the directory containing the file, so that we will be able to resolve relative reference paths.
         var mainDeclarationDir = this.determineMainDeclarationDir();
         dlog('Reading main declaration file: ' + mainDeclarationFile);
-        return fsReadFileAsync(mainDeclarationFile, 'utf8')
+        return fs.readFileP(mainDeclarationFile, 'utf8')
             .then(function (contents) {
             dlog('Parsing main declaration file: ' + mainDeclarationFile);
             return _this.wrapMainDeclarationContents(contents, mainDeclarationDir);
@@ -434,15 +434,13 @@ var TypeScriptPackageInstaller = (function () {
         assert(this.wrappedMainDeclaration);
         // Create the directory.
         dlog('Creating directory for main declaration file: ' + this.exportedTypingsSubdir);
-        return this.maybeDo(function () { return mkdirpAsync(_this.exportedTypingsSubdir); })
+        return this.maybeDo(function () { return mkdirp(_this.exportedTypingsSubdir); })
             .then(function () {
             // Use the same basename.
             var basename = path.basename(_this.determineMainDeclaration());
             var mainDeclaration = path.join(_this.exportedTypingsSubdir, basename);
             dlog('Writing main declaration file: ' + mainDeclaration);
-            return _this.maybeDo(function () {
-                return fsWriteFileAsync(mainDeclaration, _this.wrappedMainDeclaration);
-            });
+            return _this.maybeDo(function () { return writeFile(mainDeclaration, _this.wrappedMainDeclaration); });
         });
     };
     // Copy the secondary declarations (as-is) into typings.
@@ -468,11 +466,11 @@ var TypeScriptPackageInstaller = (function () {
         var sourceDeclarationDir = path.dirname(path.resolve(sourceFile));
         return this.maybeDo(function () {
             dlog('Creating directory for secondary declaration file:', destinationDir);
-            return mkdirpAsync(destinationDir);
+            return mkdirp(destinationDir);
         })
             .then(function () {
             dlog('Copying secondary declaration file:', destinationFile);
-            return fsReadFileAsync(sourceFile, 'utf8');
+            return fs.readFileP(sourceFile, 'utf8');
         })
             .then(function (contents) {
             dlog('Parsing secondary declaration file:', sourceFile);
@@ -480,9 +478,7 @@ var TypeScriptPackageInstaller = (function () {
         })
             .then(function (wrapped) {
             dlog('Wrapped secondary declaration file:\n', wrapped);
-            return _this.maybeDo(function () {
-                return fsWriteFileAsync(destinationFile, wrapped);
-            });
+            return _this.maybeDo(function () { return writeFile(destinationFile, wrapped); });
         })
             .catch(function (error) {
             // Create a more user-friendly error message
@@ -510,7 +506,7 @@ var TypeScriptPackageInstaller = (function () {
     // Read the specified TSD configuration.  Return null if file does not exist.
     TypeScriptPackageInstaller.prototype.readTsdConfigFile = function (path) {
         dlog('Reading TSD config file: ' + path);
-        return fsReadFileAsync(path, 'utf8')
+        return fs.readFileP(path, 'utf8')
             .then(function (contents) {
             dlog('Read TSD config file: ' + path);
             return new util.TsdConfig(JSON.parse(contents));
@@ -557,9 +553,7 @@ var TypeScriptPackageInstaller = (function () {
         // Write the resulting file.
         var contents = JSON.stringify(this.exportedTsdConfig, null, 2) + '\n';
         dlog('Combined TSD typings:\n' + contents);
-        return this.maybeDo(function () {
-            return fsWriteFileAsync(_this.exportedTsdConfigPath(), contents);
-        });
+        return this.maybeDo(function () { return writeFile(_this.exportedTsdConfigPath(), contents); });
     };
     // Allow conditional execution based on dry run mode.
     TypeScriptPackageInstaller.prototype.maybeDo = function (action) {
