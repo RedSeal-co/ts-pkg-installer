@@ -22,7 +22,7 @@ export class TsdPackage {
 // ## ITsdPackageMap
 // Configuration for a set of TSD packages (the part we care about).
 export interface ITsdPackageMap {
-  [dtsFile: string]: TsdPackage
+  [dtsFile: string]: TsdPackage;
 }
 
 // ## TsdConfig
