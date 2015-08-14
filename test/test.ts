@@ -314,6 +314,16 @@ describe('ts-pkg-installer', () => {
         });
       });
 
+      it('self-install runs even if we are not in a node_modules directory', (done: MochaDone) => {
+        run(nominalTestData, ['-v', '-n', '-s'], function (error: Error, stdout: string, stderr: string): void {
+          expect(error).to.equal(null);
+          expect(stderr).to.contain('ts-pkg-installer Always self-install');
+          expect(stderr).to.contain('ts-pkg-installer Wrapped main declaration file');
+          expect(stdout).to.equal('');
+          done();
+        });
+      });
+
       it('runs when force flag is configured', (done: MochaDone) => {
         // Use test data that has the force flag set.
         var testData = path.join(testDataRoot, 'force');
@@ -346,6 +356,7 @@ describe('ts-pkg-installer', () => {
       });
 
     });
+
   });
 
   // ### Package Config File
@@ -558,12 +569,9 @@ describe('ts-pkg-installer', () => {
   // ### Copy Exported Modules
   describe('Copy Exported Modules', () => {
 
-    it('copies a nominal exported module', (done: MochaDone) => {
-      run(nominalTestData, [], function (error: Error, stdout: string, stderr: string): void {
-        expect(error).to.equal(null);
-        expect(stdout).to.equal('');
-
-        var expectedPath: string = path.join(testOutputDir, 'typings', 'nominal', 'nominal.d.ts');
+    // Verifies the nominal case of exporting the main module declaration to a specific root directory.
+    function checkExportedModule(rootDir: string): void {
+        var expectedPath: string = path.join(rootDir, 'typings', 'nominal', 'nominal.d.ts');
         var expectedContents: string = (
           '/// <reference path="../foo/foo.d.ts" />\n' +
             'declare module \'nominal\' {\n' +
@@ -575,7 +583,22 @@ describe('ts-pkg-installer', () => {
 
         var actualContents = fs.readFileSync(expectedPath, 'utf8');
         expect(actualContents).to.deep.equal(expectedContents);
+    }
 
+    it('copies a nominal exported module', (done: MochaDone) => {
+      run(nominalTestData, [], function (error: Error, stdout: string, stderr: string): void {
+        expect(error).to.equal(null);
+        expect(stdout).to.equal('');
+        checkExportedModule(testOutputDir);
+        done();
+      });
+    });
+
+    it('self-installs a nominal exported module', (done: MochaDone) => {
+      run(nominalTestData, ['-s'], function (error: Error, stdout: string, stderr: string): void {
+        expect(error).to.equal(null);
+        expect(stdout).to.equal('');
+        checkExportedModule(testPackageDir);
         done();
       });
     });
@@ -595,38 +618,51 @@ describe('ts-pkg-installer', () => {
       });
     });
 
+    // Verifies the nominal case of copying secondary declarations to a specific root directory.
+    function checkSecondaryDeclarations(rootDir: string): void {
+      var expecteds: string[][] = [
+        [path.join('lib', 'util.d.ts'),
+         '/// <reference path="../../bar/bar.d.ts" />\n' +
+         '/// <reference path="foo.d.ts" />\n' +
+         'import foo = require(\'foo\');\n' +
+         'export declare function secondary(): foo.Foo;\n'
+        ],
+        [path.join('lib', 'foo.d.ts'),
+         'declare module "foo" {\n\n' +
+         '  export class Foo {\n' +
+         '    constructor();\n' +
+         '    bar(): void;\n' +
+         '  }\n\n' +
+         '}\n'
+        ]
+      ];
+
+      _.forEach(expecteds, (expected: string[]): void => {
+        var basename: string = expected[0];
+        var expectedContents: string = expected[1];
+        var expectedPath: string = path.join(rootDir, 'typings', 'secondary-declarations', basename);
+        var actualContents = fs.readFileSync(expectedPath, 'utf8');
+        dlog(basename, actualContents);
+        expect(actualContents, basename).to.deep.equal(expectedContents);
+      });
+    }
+
     it('copies secondary declarations', (done: MochaDone) => {
       var testData = path.join(testDataRoot, 'secondary-declarations');
       run(testData, ['-v'], function (error: Error, stdout: string, stderr: string): void {
         expect(error).to.equal(null);
         expect(stdout).to.equal('');
+        checkSecondaryDeclarations(testOutputDir);
+        done();
+      });
+    });
 
-        var expecteds: string[][] = [
-          [path.join('lib', 'util.d.ts'),
-           '/// <reference path="../../bar/bar.d.ts" />\n' +
-           '/// <reference path="foo.d.ts" />\n' +
-           'import foo = require(\'foo\');\n' +
-           'export declare function secondary(): foo.Foo;\n'
-          ],
-          [path.join('lib', 'foo.d.ts'),
-           'declare module "foo" {\n\n' +
-           '  export class Foo {\n' +
-           '    constructor();\n' +
-           '    bar(): void;\n' +
-           '  }\n\n' +
-           '}\n'
-          ]
-        ];
-
-        _.forEach(expecteds, (expected: string[]): void => {
-          var basename: string = expected[0];
-          var expectedContents: string = expected[1];
-          var expectedPath: string = path.join(testOutputDir, 'typings', 'secondary-declarations', basename);
-          var actualContents = fs.readFileSync(expectedPath, 'utf8');
-          dlog(basename, actualContents);
-          expect(actualContents, basename).to.deep.equal(expectedContents);
-        });
-
+    it('self-installs secondary declarations', (done: MochaDone) => {
+      var testData = path.join(testDataRoot, 'secondary-declarations');
+      run(testData, ['-v', '-s'], function (error: Error, stdout: string, stderr: string): void {
+        expect(error).to.equal(null);
+        expect(stdout).to.equal('');
+        checkSecondaryDeclarations(testPackageDir);
         done();
       });
     });
@@ -775,6 +811,20 @@ describe('ts-pkg-installer', () => {
 
         // Expect the output file to exist
         var actualPath: string = path.join(testOutputDir, 'node_modules', 'tsd.json');
+        var actualContents: string = fs.readFileSync(actualPath, 'utf8');
+
+        expect(actualContents).to.be.ok;
+
+        done();
+      });
+    });
+
+    it('self-installs the exported TSD config file', (done: MochaDone) => {
+      run(nominalTestData, ['-v', '-s'], function (error: Error, stdout: string, stderr: string): void {
+        expect(error).to.equal(null);
+
+        // Expect the output file to exist in the package directory.
+        var actualPath: string = path.join(testPackageDir, 'typings', 'tsd.json');
         var actualContents: string = fs.readFileSync(actualPath, 'utf8');
 
         expect(actualContents).to.be.ok;

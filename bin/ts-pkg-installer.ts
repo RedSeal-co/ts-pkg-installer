@@ -33,11 +33,13 @@ P.longStackTraces();
 class Options {
   configFile: string;
   dryRun: boolean;
+  selfInstall: boolean;
   verbose: boolean;
 
   constructor(options: any = {}) {
     this.configFile = options.configFile || 'tspi.json';
     this.dryRun = options.dryRun || false;
+    this.selfInstall = options.selfInstall || false;
     this.verbose = options.verbose || false;
   }
 }
@@ -49,6 +51,7 @@ var defaultOptions = new Options();
 commander
   .option('-f, --config-file <path>', 'Config file [' + defaultOptions.configFile + ']', defaultOptions.configFile)
   .option('-n, --dry-run', 'Dry run (display what would happen without taking action)')
+  .option('-s, --self-install', 'Install in module\'s own directory instead of parent')
   .option('-v, --verbose', 'Verbose logging');
 
 var debugNamespace = 'ts-pkg-installer';
@@ -254,8 +257,11 @@ class TypeScriptPackageInstaller {
     var parentPath: string = path.dirname(process.cwd());
     var parentDir: string = path.basename(parentPath);
     var grandparentDir: string = path.basename(path.dirname(parentPath));
-    var should: boolean = this.config.force || parentDir === 'node_modules' ||
+    var should: boolean = this.options.selfInstall || this.config.force || parentDir === 'node_modules' ||
       (parentDir.charAt(0) === '@' && grandparentDir === 'node_modules');
+    if (this.options.selfInstall) {
+      dlog('Always self-install');
+    }
     if (this.config.force) {
       dlog('Forced to run');
     }
@@ -289,13 +295,15 @@ class TypeScriptPackageInstaller {
   // Determine the appropriate directory in which to export module declaration (*.d.ts) files.
   private exportedTypingsDir(): string {
     return this.config.exportedTypingsDir ||
-      (this.isPackageScoped() ? path.join('..', '..', '..', 'typings') : path.join('..', '..', 'typings'));
+      (this.options.selfInstall ? 'typings'
+       : (this.isPackageScoped() ? path.join('..', '..', '..', 'typings') : path.join('..', '..', 'typings')));
   }
 
   // Determine the appropriate directory in which to export the TSD config (tsd.json) file.
   private exportedTsdConfigPath(): string {
     return this.config.exportedTsdConfig ||
-      (this.isPackageScoped() ? path.join('..', '..', 'tsd.json') : path.join('..', 'tsd.json'));
+      (this.options.selfInstall ? path.join('typings', 'tsd.json')
+       : (this.isPackageScoped() ? path.join('..', '..', 'tsd.json') : path.join('..', 'tsd.json')));
   }
 
   // Determine where we will write our main declaration file.

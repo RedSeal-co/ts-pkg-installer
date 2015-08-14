@@ -25,6 +25,7 @@ var Options = (function () {
         if (options === void 0) { options = {}; }
         this.configFile = options.configFile || 'tspi.json';
         this.dryRun = options.dryRun || false;
+        this.selfInstall = options.selfInstall || false;
         this.verbose = options.verbose || false;
     }
     return Options;
@@ -35,6 +36,7 @@ var defaultOptions = new Options();
 commander
     .option('-f, --config-file <path>', 'Config file [' + defaultOptions.configFile + ']', defaultOptions.configFile)
     .option('-n, --dry-run', 'Dry run (display what would happen without taking action)')
+    .option('-s, --self-install', 'Install in module\'s own directory instead of parent')
     .option('-v, --verbose', 'Verbose logging');
 var debugNamespace = 'ts-pkg-installer';
 var dlog = debug(debugNamespace);
@@ -176,8 +178,11 @@ var TypeScriptPackageInstaller = (function () {
         var parentPath = path.dirname(process.cwd());
         var parentDir = path.basename(parentPath);
         var grandparentDir = path.basename(path.dirname(parentPath));
-        var should = this.config.force || parentDir === 'node_modules' ||
+        var should = this.options.selfInstall || this.config.force || parentDir === 'node_modules' ||
             (parentDir.charAt(0) === '@' && grandparentDir === 'node_modules');
+        if (this.options.selfInstall) {
+            dlog('Always self-install');
+        }
         if (this.config.force) {
             dlog('Forced to run');
         }
@@ -209,12 +214,14 @@ var TypeScriptPackageInstaller = (function () {
     // Determine the appropriate directory in which to export module declaration (*.d.ts) files.
     TypeScriptPackageInstaller.prototype.exportedTypingsDir = function () {
         return this.config.exportedTypingsDir ||
-            (this.isPackageScoped() ? path.join('..', '..', '..', 'typings') : path.join('..', '..', 'typings'));
+            (this.options.selfInstall ? 'typings'
+                : (this.isPackageScoped() ? path.join('..', '..', '..', 'typings') : path.join('..', '..', 'typings')));
     };
     // Determine the appropriate directory in which to export the TSD config (tsd.json) file.
     TypeScriptPackageInstaller.prototype.exportedTsdConfigPath = function () {
         return this.config.exportedTsdConfig ||
-            (this.isPackageScoped() ? path.join('..', '..', 'tsd.json') : path.join('..', 'tsd.json'));
+            (this.options.selfInstall ? path.join('typings', 'tsd.json')
+                : (this.isPackageScoped() ? path.join('..', '..', 'tsd.json') : path.join('..', 'tsd.json')));
     };
     // Determine where we will write our main declaration file.
     // - Side effect: Sets `this.config.typingsSubdir`, if not specified in config file
