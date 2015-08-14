@@ -77,7 +77,7 @@ TS_OBJ=$(patsubst %.ts,%.js,$(TS_SRC))
 TSC=./node_modules/.bin/tsc
 TSC_OPTS=--module commonjs --target ES5 --sourceMap --declaration --noEmitOnError --noImplicitAny
 
-TSLINT=./node_modules/.bin/tslint --config tslint.json --file
+TSLINT=./node_modules/.bin/tslint --config tslint.json
 
 compile: $(TS_OBJ)
 
