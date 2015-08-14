@@ -2,7 +2,7 @@
 /// <reference path="typings/foo/foo.d.ts"/>
 
 interface Internal {
-  export : number
+  export : number;
 }
 
 export function nominal(): void {

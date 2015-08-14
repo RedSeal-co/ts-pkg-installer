@@ -7,6 +7,9 @@
 /// <reference path="../../typings/node/node.d.ts"/>
 /// <reference path="../../typings/rimraf/rimraf.d.ts"/>
 
+declare function require(name: string): any;
+require('source-map-support').install();
+
 import BluePromise = require('bluebird');
 import chai = require('chai');
 import childProcess = require('child_process');

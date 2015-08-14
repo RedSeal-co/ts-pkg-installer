@@ -27,7 +27,7 @@ install-tsd:
 	$(TSD) reinstall
 
 lint:
-	ls $(TS_SRC) | xargs -n1 node_modules/.bin/tslint --config ../tslint.json --file
+	ls $(TS_SRC) | xargs -n1 node_modules/.bin/tslint --config ../tslint.json
 
 documentation :
 	node_modules/.bin/groc --except "**/node_modules/**" --except "**/typings/**" "**/*.ts" README.md
