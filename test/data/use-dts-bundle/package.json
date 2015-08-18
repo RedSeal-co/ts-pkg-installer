@@ -1,0 +1,11 @@
+{
+  "name": "use-dts-bundle",
+  "main": "public.js",
+  "devDependencies": {
+    "dts-bundle": "^0.3.0",
+    "tsd": "^0.6.3"
+  },
+  "dependencies": {
+    "bluebird": "^2.9.34"
+  }
+}
